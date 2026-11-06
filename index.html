@@ -1,0 +1,76 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="theme-color" content="#FFFFFF">
+<title>Daily Checklist</title>
+<link rel="icon" type="image/png" href="icon.png">
+<link rel="apple-touch-icon" href="icon.png">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<div class="app">
+
+  <nav id="nav" class="hidden">
+    <div class="tabs">
+      <button id="nav-today" class="active">Today</button>
+      <button id="nav-settings">Settings</button>
+    </div>
+    <div class="nav-right">
+      <span id="count"></span>
+      <span id="sync-status"></span>
+    </div>
+  </nav>
+
+  <!-- SIGN IN (only shown when online saving is set up) -->
+  <section id="view-auth" class="hidden">
+    <div class="settings-head">
+      <h1>Daily<br>checklist</h1>
+      <p>Sign in to load your tasks on this device.</p>
+    </div>
+    <form id="auth-form" class="auth-form">
+      <label>Email
+        <input id="auth-email" type="email" autocomplete="email" required>
+      </label>
+      <label>Password
+        <input id="auth-password" type="password" autocomplete="current-password" minlength="6" required>
+      </label>
+      <div class="auth-buttons">
+        <button type="submit" id="auth-signin" class="primary">Sign in</button>
+        <button type="button" id="auth-signup">Create account</button>
+      </div>
+      <p id="auth-message" class="auth-message" role="status"></p>
+    </form>
+  </section>
+
+  <!-- TODAY -->
+  <section id="view-today" class="hidden">
+    <header class="today">
+      <p id="day-num"></p>
+      <div class="day-label">
+        <h1 id="day-name"></h1>
+        <span id="month-year"></span>
+      </div>
+    </header>
+    <ul id="task-list"></ul>
+  </section>
+
+  <!-- SETTINGS -->
+  <section id="view-settings" class="hidden">
+    <div class="settings-head">
+      <h1>Weekly<br>tasks</h1>
+      <p>Each day repeats these tasks every week.</p>
+    </div>
+    <div id="settings-days"></div>
+    <div id="account" class="account"></div>
+  </section>
+
+</div>
+
+<!-- Supabase library (online saving). Safe to leave in even if sync is off. -->
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<script src="config.js"></script>
+<script src="app.js"></script>
+</body>
+</html>
