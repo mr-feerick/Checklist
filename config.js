@@ -11,6 +11,6 @@
 // "service_role" key here.
 // ------------------------------------------------------------------
 window.CHECKLIST_CONFIG = {
-  supabaseUrl: "",   // e.g. "https://abcdefghijkl.supabase.co"
-  supabaseKey: ""    // the publishable / anon public key
+  supabaseUrl: "https://amxeywjqrmhakkindwuv.supabase.co",   // e.g. "https://abcdefghijkl.supabase.co"
+  supabaseKey: "sb_publishable_TossDdLk8jy9SSOA9kSNzw_1c-eROhp"    // the publishable / anon public key
 };
