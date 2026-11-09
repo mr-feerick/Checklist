@@ -12,6 +12,7 @@ const LS_TEMPLATE = "checklist.template";
 const LS_DONE = "checklist.done";
 const LS_DIRTY = "checklist.dirty";     // true = local changes not yet saved online
 const CHECK_SVG = '<svg aria-hidden="true" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#FFFFFF" stroke-width="4" stroke-linecap="square"><path d="M5 12.5l4.5 4.5L19 7"></path></svg>';
+const GRIP_SVG = '<svg aria-hidden="true" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="square"><path d="M4 7h16M4 12h16M4 17h16"></path></svg>';
 
 const CFG = window.CHECKLIST_CONFIG || {};
 const SYNC_ON = !!(CFG.supabaseUrl && CFG.supabaseKey);
@@ -70,13 +71,22 @@ async function must(promise) {
   return data;
 }
 
-// Send everything this device has (used after being offline)
-async function pushEverything() {
-  const today = todayKey();
+async function pushTemplate() {
   await must(db.from("templates").upsert({ user_id: user.id, data: template, updated_at: new Date().toISOString() }));
+}
+
+// Replace today's ticks on the server with what this device has
+async function pushTodayTicks() {
+  const today = todayKey();
   await must(db.from("ticks").delete().eq("user_id", user.id).eq("day", today));
   const rows = (done[today] || []).map(idx => ({ user_id: user.id, day: today, idx }));
   if (rows.length) await must(db.from("ticks").insert(rows));
+}
+
+// Send everything this device has (used after being offline)
+async function pushEverything() {
+  await pushTemplate();
+  await pushTodayTicks();
 }
 
 // Run one save; if it fails, remember we're behind and retry everything later
@@ -108,7 +118,7 @@ async function pullAll() {
       template = normalize(row.data);
     } else {
       // First sign-in: upload whatever this browser already had
-      await must(db.from("templates").upsert({ user_id: user.id, data: template, updated_at: new Date().toISOString() }));
+      await pushTemplate();
     }
     const fresh = {};
     (ticks || []).forEach(r => { (fresh[r.day] = fresh[r.day] || []).push(r.idx); });
@@ -216,6 +226,136 @@ $("auth-form").addEventListener("submit", e => { e.preventDefault(); handleAuth(
 $("auth-signup").addEventListener("click", () => handleAuth("signup"));
 
 // ---------------------------------------------------------------------
+// Changing the lists (add / edit / remove / reorder)
+// ---------------------------------------------------------------------
+
+// remap: function(oldIndex) → newIndex, or null if that task was removed.
+// Used to keep today's ticks attached to the right tasks.
+function templateChanged(d, remap) {
+  const today = todayKey();
+  const moveTicks = typeof remap === "function" && d === new Date().getDay();
+  if (moveTicks) {
+    done[today] = (done[today] || []).map(remap).filter(v => v !== null && v !== undefined);
+  }
+  saveLocal();
+
+  sync(async () => {
+    await pushTemplate();
+    if (moveTicks) await pushTodayTicks();
+  });
+}
+
+function addTask(d, text) {
+  template[d].push(text);
+  templateChanged(d);
+}
+
+function editTask(d, i, text) {
+  if (!text || text === template[d][i]) return;
+  template[d][i] = text;
+  templateChanged(d);
+}
+
+function removeTask(d, i) {
+  template[d].splice(i, 1);
+  templateChanged(d, old => old === i ? null : old > i ? old - 1 : old);
+}
+
+function moveTask(d, from, to) {
+  if (from === to) return;
+  const order = template[d].map((_, i) => i);
+  const [t] = template[d].splice(from, 1);
+  template[d].splice(to, 0, t);
+  const [o] = order.splice(from, 1);
+  order.splice(to, 0, o);
+  const newIndex = {};
+  order.forEach((old, pos) => { newIndex[old] = pos; });
+  templateChanged(d, old => newIndex[old]);
+}
+
+// ---------------------------------------------------------------------
+// Drag to reorder (mouse and touch). Drag by the element with class "handle".
+// Keyboard: focus the handle and use the up / down arrow keys.
+// ---------------------------------------------------------------------
+let dragging = false;
+let pendingRedraw = false;
+
+function makeSortable(list, onMove, afterMove) {
+  const items = () => [...list.children].filter(el => el.classList.contains("sortable"));
+
+  list.querySelectorAll(".handle").forEach(handle => {
+    handle.addEventListener("pointerdown", e => {
+      if (e.button !== 0) return;
+      e.preventDefault();
+      const all = items();
+      const li = handle.closest(".sortable");
+      const from = all.indexOf(li);
+      if (from < 0) return;
+      const rects = all.map(el => { const r = el.getBoundingClientRect(); return { top: r.top + window.scrollY, h: r.height }; });
+      const startY = e.pageY;
+      let to = from;
+
+      dragging = true;
+      li.classList.add("dragging");
+      document.body.classList.add("is-dragging");
+      try { handle.setPointerCapture(e.pointerId); } catch {}
+
+      const move = ev => {
+        if (ev.clientY < 70) window.scrollBy(0, -12);
+        else if (ev.clientY > window.innerHeight - 70) window.scrollBy(0, 12);
+        const dy = ev.pageY - startY;
+        li.style.transform = "translateY(" + dy + "px)";
+        const centre = rects[from].top + dy + rects[from].h / 2;
+        to = 0;
+        all.forEach((el, j) => { if (j !== from && rects[j].top + rects[j].h / 2 < centre) to++; });
+        all.forEach((el, j) => {
+          if (j === from) return;
+          let shift = 0;
+          if (from < to && j > from && j <= to) shift = -rects[from].h;
+          else if (to < from && j >= to && j < from) shift = rects[from].h;
+          el.style.transform = shift ? "translateY(" + shift + "px)" : "";
+        });
+      };
+
+      const end = () => {
+        handle.removeEventListener("pointermove", move);
+        handle.removeEventListener("pointerup", end);
+        handle.removeEventListener("pointercancel", end);
+        all.forEach(el => { el.style.transform = ""; });
+        li.classList.remove("dragging");
+        document.body.classList.remove("is-dragging");
+        dragging = false;
+        if (to !== from) { onMove(from, to); afterMove(to); }
+        else if (pendingRedraw) afterMove(null);
+        pendingRedraw = false;
+      };
+
+      handle.addEventListener("pointermove", move);
+      handle.addEventListener("pointerup", end);
+      handle.addEventListener("pointercancel", end);
+    });
+
+    handle.addEventListener("keydown", e => {
+      if (e.key !== "ArrowUp" && e.key !== "ArrowDown") return;
+      e.preventDefault();
+      const all = items();
+      const from = all.indexOf(handle.closest(".sortable"));
+      const to = from + (e.key === "ArrowUp" ? -1 : 1);
+      if (to < 0 || to >= all.length) return;
+      onMove(from, to);
+      afterMove(to, true);
+    });
+  });
+}
+
+// After a keyboard move, put focus back on the moved item's handle
+function refocusHandle(list, index, fromKeyboard) {
+  if (!fromKeyboard || index === null) return;
+  const el = [...list.children].filter(x => x.classList.contains("sortable"))[index];
+  if (el) el.querySelector(".handle").focus();
+}
+
+// ---------------------------------------------------------------------
 // Today view
 // ---------------------------------------------------------------------
 let currentKey = null;
@@ -248,17 +388,20 @@ function renderToday() {
 
   tasks.forEach((text, i) => {
     const li = document.createElement("li");
-    li.className = "task" + (ticked.includes(i) ? " done" : "");
-    const label = document.createElement("label");
+    li.className = "task sortable" + (ticked.includes(i) ? " done" : "");
 
+    // The number is the drag handle
+    const num = document.createElement("button");
+    num.type = "button";
+    num.className = "num handle";
+    num.textContent = String(i + 1).padStart(2, "0");
+    num.setAttribute("aria-label", "Move task " + (i + 1) + ". Drag, or use the up and down arrow keys");
+
+    const label = document.createElement("label");
     const cb = document.createElement("input");
     cb.type = "checkbox";
     cb.checked = ticked.includes(i);
     cb.addEventListener("change", () => toggle(i, cb.checked, li));
-
-    const num = document.createElement("span");
-    num.className = "num";
-    num.textContent = String(i + 1).padStart(2, "0");
 
     const span = document.createElement("span");
     span.className = "text";
@@ -268,10 +411,14 @@ function renderToday() {
     box.className = "box";
     box.innerHTML = CHECK_SVG;
 
-    label.append(cb, num, span, box);
-    li.appendChild(label);
+    label.append(cb, span, box);
+    li.append(num, label);
     list.appendChild(li);
   });
+
+  makeSortable(list,
+    (from, to) => moveTask(dayIndex, from, to),
+    (to, kbd) => { renderToday(); refocusHandle($("task-list"), to, kbd); });
   updateCount();
 }
 
@@ -293,6 +440,10 @@ function toggle(i, checked, li) {
 // ---------------------------------------------------------------------
 // Settings view
 // ---------------------------------------------------------------------
+function settingsList(d) {
+  return $("settings-days").children[ORDER.indexOf(d)].querySelector("ul");
+}
+
 function renderSettings() {
   const wrap = $("settings-days");
   wrap.innerHTML = "";
@@ -308,34 +459,54 @@ function renderSettings() {
 
     template[d].forEach((text, i) => {
       const li = document.createElement("li");
-      const input = document.createElement("input");
-      input.type = "text";
-      input.value = text;
-      input.setAttribute("aria-label", DAYS[d] + " task " + (i + 1));
-      input.addEventListener("change", () => { template[d][i] = input.value; templateChanged(d); });
+      li.className = "sortable";
+
+      const grip = document.createElement("button");
+      grip.type = "button";
+      grip.className = "grip handle";
+      grip.innerHTML = GRIP_SVG;
+      grip.setAttribute("aria-label", "Move " + text + ". Drag, or use the up and down arrow keys");
+
+      const span = document.createElement("span");
+      span.className = "task-text";
+      span.textContent = text;
+      span.title = "Click to edit";
+      span.addEventListener("click", () => startEdit(li, d, i));
+
+      const edit = document.createElement("button");
+      edit.type = "button";
+      edit.className = "small-btn";
+      edit.textContent = "Edit";
+      edit.setAttribute("aria-label", "Edit " + text);
+      edit.addEventListener("click", () => startEdit(li, d, i));
+
       const del = document.createElement("button");
+      del.type = "button";
       del.className = "small-btn";
       del.textContent = "Remove";
-      del.addEventListener("click", () => { template[d].splice(i, 1); templateChanged(d); renderSettings(); });
-      li.append(input, del);
+      del.setAttribute("aria-label", "Remove " + text);
+      del.addEventListener("click", () => { removeTask(d, i); renderSettings(); });
+
+      li.append(grip, span, edit, del);
       ul.appendChild(li);
     });
 
     const addLi = document.createElement("li");
+    addLi.className = "add-row";
     const addInput = document.createElement("input");
     addInput.type = "text";
     addInput.placeholder = "Add a task…";
     addInput.setAttribute("aria-label", "New " + DAYS[d] + " task");
     const addBtn = document.createElement("button");
+    addBtn.type = "button";
     addBtn.className = "small-btn add";
     addBtn.textContent = "Add";
     const add = () => {
       const v = addInput.value.trim();
       if (!v) return;
-      template[d].push(v);
-      templateChanged(d);
+      addTask(d, v);
       renderSettings();
-      const fresh = $("settings-days").children[ORDER.indexOf(d)].querySelector("input[placeholder]");
+      const fresh = settingsList(d).querySelector("input[placeholder]");
       if (fresh) fresh.focus();
     };
     addBtn.addEventListener("click", add);
@@ -345,9 +516,43 @@ function renderSettings() {
 
     block.appendChild(ul);
     wrap.appendChild(block);
+
+    makeSortable(ul,
+      (from, to) => moveTask(d, from, to),
+      (to, kbd) => { renderSettings(); refocusHandle(settingsList(d), to, kbd); });
   });
 
   renderAccount();
+}
+
+// Turn a task row into a text box. Enter or clicking away saves, Esc cancels.
+function startEdit(li, d, i) {
+  if (li.classList.contains("editing")) return;
+  li.classList.add("editing");
+  const span = li.querySelector(".task-text");
+  const input = document.createElement("input");
+  input.type = "text";
+  input.value = template[d][i];
+  input.setAttribute("aria-label", "Edit task");
+  span.replaceWith(input);
+  const editBtn = li.querySelector(".small-btn");
+  editBtn.textContent = "Save";
+
+  let finished = false;
+  const finish = keep => {
+    if (finished) return;
+    finished = true;
+    if (keep) editTask(d, i, input.value.trim());
+    renderSettings();
+  };
+  input.addEventListener("keydown", e => {
+    if (e.key === "Enter") { e.preventDefault(); finish(true); }
+    if (e.key === "Escape") { e.preventDefault(); finish(false); }
+  });
+  input.addEventListener("blur", () => finish(true));
+
+  input.focus();
+  input.setSelectionRange(input.value.length, input.value.length);
 }
 
 function renderAccount() {
@@ -368,19 +573,6 @@ function renderAccount() {
   el.append(info, out);
 }
 
-function templateChanged(d) {
-  const today = todayKey();
-  // If today's list changed, clear today's ticks so they don't point at the wrong task
-  const clearToday = d === new Date().getDay();
-  if (clearToday) delete done[today];
-  saveLocal();
-
-  sync(async () => {
-    await must(db.from("templates").upsert({ user_id: user.id, data: template, updated_at: new Date().toISOString() }));
-    if (clearToday) await must(db.from("ticks").delete().eq("user_id", user.id).eq("day", today));
-  });
-}
-
 // ---------------------------------------------------------------------
 // Navigation
 // ---------------------------------------------------------------------
@@ -399,11 +591,13 @@ function show(v) {
   if (v === "settings") renderSettings();
 }
 
-// Redraw after new data arrives, without wiping something you're typing
+// Redraw after new data arrives, without interrupting a drag or an edit
 function redraw(listsChanged) {
+  if (dragging) { pendingRedraw = true; return; }
   if (view === "today") renderToday();
   if (view === "settings" && listsChanged) {
-    const typing = document.activeElement && $("view-settings").contains(document.activeElement);
+    const typing = document.activeElement && $("view-settings").contains(document.activeElement)
+      && document.activeElement.tagName === "INPUT";
     if (!typing) renderSettings();
   }
 }
@@ -413,7 +607,7 @@ $("nav-settings").addEventListener("click", () => show("settings"));
 
 // New day while the tab is open → load the new day's list
 setInterval(() => {
-  if (view === "today" && todayKey() !== currentKey) { prune(); renderToday(); }
+  if (view === "today" && !dragging && todayKey() !== currentKey) { prune(); renderToday(); }
 }, 30000);
 
 // ---------------------------------------------------------------------
