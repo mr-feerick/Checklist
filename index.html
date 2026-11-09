@@ -7,6 +7,16 @@
 <title>Daily Checklist</title>
 <link rel="icon" type="image/png" href="icon.png">
 <link rel="apple-touch-icon" href="icon.png">
+<!-- Apply the saved look before anything is drawn, so there's no flash -->
+<script>
+  (function () {
+    var t = "swiss", m = "auto";
+    try { t = localStorage.getItem("checklist.theme") || t; m = localStorage.getItem("checklist.mode") || m; } catch (e) {}
+    var dark = m === "dark" || (m === "auto" && window.matchMedia && matchMedia("(prefers-color-scheme: dark)").matches);
+    document.documentElement.setAttribute("data-theme", t);
+    document.documentElement.setAttribute("data-mode", dark ? "dark" : "light");
+  })();
+</script>
 <link rel="stylesheet" href="style.css">
 </head>
 <body>
@@ -54,6 +64,7 @@
             <span id="rel-tag" class="rel-tag"></span>
             <button id="back-today" class="back-today hidden" type="button">Back to today</button>
           </div>
+          <span id="full-date"></span>
           <h1 id="day-name"></h1>
           <span id="month-year"></span>
         </div>
@@ -67,6 +78,11 @@
         </button>
       </div>
     </header>
+    <div id="progress" class="progress" aria-hidden="true">
+      <div class="pills" id="progress-pills"></div>
+      <div class="bar"><span id="progress-fill"></span></div>
+      <span class="progress-text" id="progress-text"></span>
+    </div>
     <ul id="task-list"></ul>
   </section>
 
@@ -76,6 +92,38 @@
       <h1>Weekly<br>tasks</h1>
       <p>Each day repeats these tasks every week.</p>
     </div>
+
+    <div class="look-block">
+      <h3>Look</h3>
+      <div class="theme-grid" role="group" aria-label="Look">
+        <button type="button" class="theme-option" data-theme-option="swiss" aria-pressed="false">
+          <span class="swatch"><span class="sw-light"></span><span class="sw-dark"></span></span>
+          <span class="theme-name">Swiss</span>
+        </button>
+        <button type="button" class="theme-option" data-theme-option="atomic" aria-pressed="false">
+          <span class="swatch"><span class="sw-light"></span><span class="sw-dark"></span></span>
+          <span class="theme-name">Atomic</span>
+        </button>
+        <button type="button" class="theme-option" data-theme-option="notebook" aria-pressed="false">
+          <span class="swatch"><span class="sw-light"></span><span class="sw-dark"></span></span>
+          <span class="theme-name">Notebook</span>
+        </button>
+        <button type="button" class="theme-option" data-theme-option="midnight" aria-pressed="false">
+          <span class="swatch"><span class="sw-light"></span><span class="sw-dark"></span></span>
+          <span class="theme-name">Midnight</span>
+        </button>
+      </div>
+      <div class="mode-row">
+        <span class="mode-label">Appearance</span>
+        <div class="mode-switch" role="group" aria-label="Appearance">
+          <button type="button" data-mode-option="auto" aria-pressed="false">Auto</button>
+          <button type="button" data-mode-option="light" aria-pressed="false">Light</button>
+          <button type="button" data-mode-option="dark" aria-pressed="false">Dark</button>
+        </div>
+      </div>
+      <p class="look-note">Saved on this device. Auto follows your phone or computer's dark mode setting.</p>
+    </div>
+
     <div id="settings-days"></div>
     <div id="account" class="account"></div>
   </section>

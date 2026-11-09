@@ -11,7 +11,10 @@ const KEEP_DAYS = 14;                   // how many days of ticks to keep
 const LS_TEMPLATE = "checklist.template";
 const LS_DONE = "checklist.done";
 const LS_DIRTY = "checklist.dirty";     // true = local changes not yet saved online
-const CHECK_SVG = '<svg aria-hidden="true" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#FFFFFF" stroke-width="4" stroke-linecap="square"><path d="M5 12.5l4.5 4.5L19 7"></path></svg>';
+const CHECK_SVG =
+  '<svg class="tick-std" aria-hidden="true" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="4" stroke-linecap="square"><path d="M5 12.5l4.5 4.5L19 7"></path></svg>' +
+  '<svg class="tick-hand" aria-hidden="true" width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M4 13c2 1.5 3.5 3.5 4.5 5.5C11 12 15 7 21 3"></path></svg>';
+const HANDLE_GRIP = '<svg class="g" aria-hidden="true" width="18" height="18" viewBox="0 0 24 24" fill="currentColor"><circle cx="9" cy="6" r="1.7"></circle><circle cx="15" cy="6" r="1.7"></circle><circle cx="9" cy="12" r="1.7"></circle><circle cx="15" cy="12" r="1.7"></circle><circle cx="9" cy="18" r="1.7"></circle><circle cx="15" cy="18" r="1.7"></circle></svg>';
 const GRIP_SVG = '<svg aria-hidden="true" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="square"><path d="M4 7h16M4 12h16M4 17h16"></path></svg>';
 
 const CFG = window.CHECKLIST_CONFIG || {};
@@ -379,8 +382,20 @@ function relLabel(n) {
 
 function updateCount() {
   const tasks = template[viewDate().getDay()] || [];
-  const n = (done[currentKey] || []).filter(i => i < tasks.length).length;
-  $("count").textContent = tasks.length ? n + " / " + tasks.length : "";
+  const ticked = (done[currentKey] || []).filter(i => i < tasks.length);
+  const n = ticked.length, total = tasks.length;
+  $("count").textContent = total ? n + " / " + total : "";
+
+  // progress shown by the Atomic, Notebook and Midnight looks
+  $("progress").classList.toggle("hidden", total === 0);
+  const pills = $("progress-pills");
+  if (pills.children.length !== total) {
+    pills.innerHTML = "";
+    for (let i = 0; i < total; i++) pills.appendChild(document.createElement("span"));
+  }
+  [...pills.children].forEach((p, i) => p.classList.toggle("on", i < n));
+  $("progress-fill").style.width = total ? (n / total * 100) + "%" : "0";
+  $("progress-text").textContent = total ? n + " of " + total + " done" : "";
 }
 
 function renderToday() {
@@ -393,6 +408,7 @@ function renderToday() {
   $("day-num").textContent = String(now.getDate()).padStart(2, "0");
   $("day-name").textContent = DAYS[dayIndex];
   $("month-year").textContent = now.toLocaleDateString("en-GB", { month: "short" }) + " " + now.getFullYear();
+  $("full-date").textContent = now.toLocaleDateString("en-GB", { day: "numeric", month: "long", year: "numeric" });
   $("rel-tag").textContent = relLabel(offset);
   $("date-header").classList.toggle("is-today", offset === 0);
   $("back-today").classList.toggle("hidden", offset === 0);
@@ -419,7 +435,7 @@ function renderToday() {
     const num = document.createElement("button");
     num.type = "button";
     num.className = "num handle";
-    num.textContent = String(i + 1).padStart(2, "0");
+    num.innerHTML = '<span class="n">' + String(i + 1).padStart(2, "0") + "</span>" + HANDLE_GRIP;
     num.setAttribute("aria-label", "Move task " + (i + 1) + ". Drag, or use the up and down arrow keys");
 
     const label = document.createElement("label");
@@ -700,6 +716,48 @@ setInterval(() => {
   prune();
   if (view === "today" && !dragging) renderToday();
 }, 30000);
+
+// ---------------------------------------------------------------------
+// Look (Swiss / Atomic / Notebook / Midnight) and Appearance (Auto / Light / Dark)
+// Saved on this device. Applied early in index.html too, so there's no flash.
+// ---------------------------------------------------------------------
+const THEMES = ["swiss", "atomic", "notebook", "midnight"];
+const MODES = ["auto", "light", "dark"];
+const darkQuery = window.matchMedia ? window.matchMedia("(prefers-color-scheme: dark)") : null;
+
+function lsGet(k, fallback) { try { return localStorage.getItem(k) || fallback; } catch { return fallback; } }
+function lsSet(k, v) { try { localStorage.setItem(k, v); } catch {} }
+
+let theme = THEMES.includes(lsGet("checklist.theme")) ? lsGet("checklist.theme") : "swiss";
+let mode = MODES.includes(lsGet("checklist.mode")) ? lsGet("checklist.mode") : "auto";
+
+function applyLook() {
+  const dark = mode === "dark" || (mode === "auto" && !!darkQuery && darkQuery.matches);
+  const root = document.documentElement;
+  root.setAttribute("data-theme", theme);
+  root.setAttribute("data-mode", dark ? "dark" : "light");
+  // browser/phone toolbar colour
+  const meta = document.querySelector('meta[name="theme-color"]');
+  if (meta) meta.setAttribute("content", getComputedStyle(root).getPropertyValue("--bg").trim() || "#FFFFFF");
+  document.querySelectorAll("[data-theme-option]").forEach(b =>
+    b.setAttribute("aria-pressed", String(b.dataset.themeOption === theme)));
+  document.querySelectorAll("[data-mode-option]").forEach(b =>
+    b.setAttribute("aria-pressed", String(b.dataset.modeOption === mode)));
+}
+
+document.querySelectorAll("[data-theme-option]").forEach(b => b.addEventListener("click", () => {
+  theme = b.dataset.themeOption; lsSet("checklist.theme", theme); applyLook();
+}));
+document.querySelectorAll("[data-mode-option]").forEach(b => b.addEventListener("click", () => {
+  mode = b.dataset.modeOption; lsSet("checklist.mode", mode); applyLook();
+}));
+// In Auto, follow the phone / computer when it switches between light and dark
+if (darkQuery) {
+  const onChange = () => { if (mode === "auto") applyLook(); };
+  if (darkQuery.addEventListener) darkQuery.addEventListener("change", onChange);
+  else if (darkQuery.addListener) darkQuery.addListener(onChange);
+}
+applyLook();
 
 // ---------------------------------------------------------------------
 // Start
