@@ -46,11 +46,25 @@
 
   <!-- TODAY -->
   <section id="view-today" class="hidden">
-    <header class="today">
-      <p id="day-num"></p>
-      <div class="day-label">
-        <h1 id="day-name"></h1>
-        <span id="month-year"></span>
+    <header class="today" id="date-header">
+      <div class="date-inner" id="date-inner">
+        <p id="day-num"></p>
+        <div class="day-label">
+          <div class="rel-row">
+            <span id="rel-tag" class="rel-tag"></span>
+            <button id="back-today" class="back-today hidden" type="button">Back to today</button>
+          </div>
+          <h1 id="day-name"></h1>
+          <span id="month-year"></span>
+        </div>
+      </div>
+      <div class="day-arrows">
+        <button id="prev-day" type="button" aria-label="Previous day">
+          <svg aria-hidden="true" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="square"><path d="M15 5l-7 7 7 7"></path></svg>
+        </button>
+        <button id="next-day" type="button" aria-label="Next day">
+          <svg aria-hidden="true" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="square"><path d="M9 5l7 7-7 7"></path></svg>
+        </button>
       </div>
     </header>
     <ul id="task-list"></ul>

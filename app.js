@@ -39,6 +39,7 @@ function dateKey(d) {
 }
 function daysAgoKey(n) { const d = new Date(); d.setDate(d.getDate() - n); return dateKey(d); }
 function todayKey() { return dateKey(new Date()); }
+function keyWeekday(k) { const [y, m, d] = k.split("-").map(Number); return new Date(y, m - 1, d).getDay(); }
 
 let template = normalize(load(LS_TEMPLATE, null));
 let done = load(LS_DONE, {});
@@ -75,18 +76,22 @@ async function pushTemplate() {
   await must(db.from("templates").upsert({ user_id: user.id, data: template, updated_at: new Date().toISOString() }));
 }
 
-// Replace today's ticks on the server with what this device has
-async function pushTodayTicks() {
-  const today = todayKey();
-  await must(db.from("ticks").delete().eq("user_id", user.id).eq("day", today));
-  const rows = (done[today] || []).map(idx => ({ user_id: user.id, day: today, idx }));
+// Replace the server's ticks for these dates with what this device has
+async function pushTicks(keys) {
+  if (!keys.length) return;
+  await must(db.from("ticks").delete().eq("user_id", user.id).in("day", keys));
+  const rows = [];
+  keys.forEach(day => (done[day] || []).forEach(idx => rows.push({ user_id: user.id, day, idx })));
   if (rows.length) await must(db.from("ticks").insert(rows));
 }
 
 // Send everything this device has (used after being offline)
 async function pushEverything() {
   await pushTemplate();
-  await pushTodayTicks();
+  await must(db.from("ticks").delete().eq("user_id", user.id).gte("day", daysAgoKey(KEEP_DAYS)));
+  const rows = [];
+  Object.keys(done).forEach(day => (done[day] || []).forEach(idx => rows.push({ user_id: user.id, day, idx })));
+  if (rows.length) await must(db.from("ticks").insert(rows));
 }
 
 // Run one save; if it fails, remember we're behind and retry everything later
@@ -230,18 +235,18 @@ $("auth-signup").addEventListener("click", () => handleAuth("signup"));
 // ---------------------------------------------------------------------
 
 // remap: function(oldIndex) → newIndex, or null if that task was removed.
-// Used to keep today's ticks attached to the right tasks.
+// Keeps ticks attached to the right tasks on every date that uses this weekday.
 function templateChanged(d, remap) {
-  const today = todayKey();
-  const moveTicks = typeof remap === "function" && d === new Date().getDay();
-  if (moveTicks) {
-    done[today] = (done[today] || []).map(remap).filter(v => v !== null && v !== undefined);
+  let keys = [];
+  if (typeof remap === "function") {
+    keys = Object.keys(done).filter(k => keyWeekday(k) === d);
+    keys.forEach(k => { done[k] = done[k].map(remap).filter(v => v !== null && v !== undefined); });
   }
   saveLocal();
 
   sync(async () => {
     await pushTemplate();
-    if (moveTicks) await pushTodayTicks();
+    await pushTicks(keys);
   });
 }
 
@@ -358,16 +363,28 @@ function refocusHandle(list, index, fromKeyboard) {
 // ---------------------------------------------------------------------
 // Today view
 // ---------------------------------------------------------------------
-let currentKey = null;
+let currentKey = null;        // the date being shown
+let offset = 0;               // days from today: 0 = today, 1 = tomorrow, -1 = yesterday
+let lastToday = todayKey();   // to notice midnight
+const MIN_OFFSET = -(KEEP_DAYS - 1);
+
+function viewDate() { const d = new Date(); d.setHours(12, 0, 0, 0); d.setDate(d.getDate() + offset); return d; }
+
+function relLabel(n) {
+  if (n === 0) return "Today";
+  if (n === 1) return "Tomorrow";
+  if (n === -1) return "Yesterday";
+  return n > 0 ? "In " + n + " days" : -n + " days ago";
+}
 
 function updateCount() {
-  const tasks = template[new Date().getDay()] || [];
+  const tasks = template[viewDate().getDay()] || [];
   const n = (done[currentKey] || []).filter(i => i < tasks.length).length;
   $("count").textContent = tasks.length ? n + " / " + tasks.length : "";
 }
 
 function renderToday() {
-  const now = new Date();
+  const now = viewDate();
   currentKey = dateKey(now);
   const dayIndex = now.getDay();
   const tasks = template[dayIndex] || [];
@@ -376,12 +393,20 @@ function renderToday() {
   $("day-num").textContent = String(now.getDate()).padStart(2, "0");
   $("day-name").textContent = DAYS[dayIndex];
   $("month-year").textContent = now.toLocaleDateString("en-GB", { month: "short" }) + " " + now.getFullYear();
+  $("rel-tag").textContent = relLabel(offset);
+  $("date-header").classList.toggle("is-today", offset === 0);
+  $("back-today").classList.toggle("hidden", offset === 0);
+  $("prev-day").disabled = offset <= MIN_OFFSET;
+  $("nav-today").classList.toggle("active", view === "today" && offset === 0);
 
   const list = $("task-list");
   list.innerHTML = "";
 
   if (tasks.length === 0) {
-    list.innerHTML = '<li class="empty">Nothing set for today. Add tasks in Settings.</li>';
+    const li = document.createElement("li");
+    li.className = "empty";
+    li.textContent = "Nothing set for " + DAYS[dayIndex] + ". Add tasks in Settings.";
+    list.appendChild(li);
     updateCount();
     return;
   }
@@ -467,18 +492,14 @@ function renderSettings() {
       grip.innerHTML = GRIP_SVG;
       grip.setAttribute("aria-label", "Move " + text + ". Drag, or use the up and down arrow keys");
 
-      const span = document.createElement("span");
+      // Click the text to edit it
+      const span = document.createElement("button");
+      span.type = "button";
       span.className = "task-text";
       span.textContent = text;
       span.title = "Click to edit";
+      span.setAttribute("aria-label", "Edit " + text);
       span.addEventListener("click", () => startEdit(li, d, i));
-
-      const edit = document.createElement("button");
-      edit.type = "button";
-      edit.className = "small-btn";
-      edit.textContent = "Edit";
-      edit.setAttribute("aria-label", "Edit " + text);
-      edit.addEventListener("click", () => startEdit(li, d, i));
 
       const del = document.createElement("button");
       del.type = "button";
@@ -487,7 +508,7 @@ function renderSettings() {
       del.setAttribute("aria-label", "Remove " + text);
       del.addEventListener("click", () => { removeTask(d, i); renderSettings(); });
 
-      li.append(grip, span, edit, del);
+      li.append(grip, span, del);
       ul.appendChild(li);
     });
 
@@ -535,8 +556,6 @@ function startEdit(li, d, i) {
   input.value = template[d][i];
   input.setAttribute("aria-label", "Edit task");
   span.replaceWith(input);
-  const editBtn = li.querySelector(".small-btn");
-  editBtn.textContent = "Save";
 
   let finished = false;
   const finish = keep => {
@@ -587,7 +606,7 @@ function show(v) {
   $("nav-today").classList.toggle("active", v === "today");
   $("nav-settings").classList.toggle("active", v === "settings");
   $("count").classList.toggle("hidden", v !== "today");
-  if (v === "today") renderToday();
+  if (v === "today") { offset = 0; renderToday(); }
   if (v === "settings") renderSettings();
 }
 
@@ -605,9 +624,81 @@ function redraw(listsChanged) {
 $("nav-today").addEventListener("click", () => show("today"));
 $("nav-settings").addEventListener("click", () => show("settings"));
 
-// New day while the tab is open → load the new day's list
+// ---------------------------------------------------------------------
+// Moving between days: arrows (desktop), swipe on the date (phone),
+// left / right arrow keys
+// ---------------------------------------------------------------------
+function goToDay(newOffset) {
+  newOffset = Math.max(MIN_OFFSET, newOffset);
+  if (newOffset === offset) return false;
+  const dir = newOffset > offset ? 1 : -1;
+  offset = newOffset;
+  renderToday();
+  [$("date-inner"), $("task-list")].forEach(el => {
+    el.style.transform = ""; el.style.opacity = "";
+    if (el.animate) el.animate(
+      [{ transform: "translateX(" + (dir * 40) + "px)", opacity: 0 }, { transform: "none", opacity: 1 }],
+      { duration: 220, easing: "ease-out" });
+  });
+  return true;
+}
+
+$("prev-day").addEventListener("click", () => goToDay(offset - 1));
+$("next-day").addEventListener("click", () => goToDay(offset + 1));
+$("back-today").addEventListener("click", () => goToDay(0));
+
+document.addEventListener("keydown", e => {
+  if (view !== "today" || dragging) return;
+  if (e.key !== "ArrowLeft" && e.key !== "ArrowRight") return;
+  const t = e.target;
+  if (t && (t.tagName === "INPUT" || t.tagName === "TEXTAREA" || t.isContentEditable)) return;
+  e.preventDefault();
+  goToDay(offset + (e.key === "ArrowRight" ? 1 : -1));
+});
+
+(function swipe() {
+  const header = $("date-header");
+  const inner = $("date-inner");
+  let startX = null, startY = 0, dx = 0, mode = null; // mode: null | "x" | "y"
+
+  header.addEventListener("pointerdown", e => {
+    if (e.pointerType === "mouse") return;
+    startX = e.clientX; startY = e.clientY; dx = 0; mode = null;
+    inner.classList.remove("snap");
+  });
+  header.addEventListener("pointermove", e => {
+    if (e.pointerType === "mouse" || startX === null) return;
+    const mx = e.clientX - startX, my = e.clientY - startY;
+    if (!mode && (Math.abs(mx) > 10 || Math.abs(my) > 10)) mode = Math.abs(mx) > Math.abs(my) ? "x" : "y";
+    if (mode !== "x") return;
+    dx = mx;
+    // resist dragging past the oldest day we keep
+    const blocked = dx > 0 && offset <= MIN_OFFSET;
+    const shown = blocked ? dx * 0.2 : dx * 0.7;
+    inner.style.transform = "translateX(" + shown + "px)";
+    inner.style.opacity = String(Math.max(0.3, 1 - Math.abs(shown) / 300));
+  });
+  const finish = e => {
+    if (e.pointerType === "mouse") return;
+    const wasX = mode === "x";
+    mode = null; startX = null;
+    if (!wasX) return;
+    const moved = Math.abs(dx) > 50 && goToDay(offset + (dx < 0 ? 1 : -1));
+    if (!moved) {
+      inner.classList.add("snap");
+      inner.style.transform = ""; inner.style.opacity = "";
+    }
+  };
+  header.addEventListener("pointerup", finish);
+  header.addEventListener("pointercancel", finish);
+})();
+
+// New day while the tab is open → "today" moves on with it
 setInterval(() => {
-  if (view === "today" && !dragging && todayKey() !== currentKey) { prune(); renderToday(); }
+  if (todayKey() === lastToday) return;
+  lastToday = todayKey();
+  prune();
+  if (view === "today" && !dragging) renderToday();
 }, 30000);
 
 // ---------------------------------------------------------------------
