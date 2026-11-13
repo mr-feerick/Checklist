@@ -78,12 +78,30 @@
         </button>
       </div>
     </header>
+    <!-- Switch between the weekly list and the "just today" list -->
+    <div id="list-tabs" class="list-tabs hidden" role="tablist" aria-label="Lists">
+      <button type="button" role="tab" id="tab-weekly" aria-controls="task-list" aria-selected="true">
+        <span class="tab-name" id="tab-weekly-name">Every day</span><span class="tab-count" id="tab-weekly-count"></span>
+      </button>
+      <button type="button" role="tab" id="tab-oneoff" aria-controls="oneoff-panel" aria-selected="false">
+        <span class="tab-name" id="tab-oneoff-name">Just today</span><span class="tab-count" id="tab-oneoff-count"></span>
+      </button>
+    </div>
     <div id="progress" class="progress" aria-hidden="true">
       <div class="pills" id="progress-pills"></div>
       <div class="bar"><span id="progress-fill"></span></div>
       <span class="progress-text" id="progress-text"></span>
     </div>
-    <ul id="task-list"></ul>
+    <ul id="task-list" role="tabpanel" aria-labelledby="tab-weekly"></ul>
+    <div id="oneoff-panel" class="hidden" role="tabpanel" aria-labelledby="tab-oneoff">
+      <ul id="oneoff-list"></ul>
+      <form id="oneoff-add" class="oneoff-add" autocomplete="off">
+        <span class="oneoff-plus" aria-hidden="true">+</span>
+        <input id="oneoff-input" type="text" placeholder="Add something for today…" aria-label="New task for just this day" maxlength="200">
+        <button type="submit" class="small-btn add">Add</button>
+      </form>
+      <p id="oneoff-note" class="oneoff-note">Ticked ones clear tomorrow. Unticked ones carry over.</p>
+    </div>
   </section>
 
   <!-- SETTINGS -->
@@ -91,6 +109,19 @@
     <div class="settings-head">
       <h1>Weekly<br>tasks</h1>
       <p>Each day repeats these tasks every week.</p>
+    </div>
+
+    <div class="look-block">
+      <div class="mode-row">
+        <div class="setting-text">
+          <span class="mode-label">“Just today” list</span>
+          <p class="look-note">Quick tasks you add during the day. Unticked ones carry over to the next day.</p>
+        </div>
+        <div class="mode-switch" role="group" aria-label="Just today list">
+          <button type="button" data-oneoff-option="on" aria-pressed="false">On</button>
+          <button type="button" data-oneoff-option="off" aria-pressed="false">Off</button>
+        </div>
+      </div>
     </div>
 
     <div class="look-block">

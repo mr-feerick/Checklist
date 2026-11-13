@@ -47,11 +47,42 @@ function keyWeekday(k) { const [y, m, d] = k.split("-").map(Number); return new 
 let template = normalize(load(LS_TEMPLATE, null));
 let done = load(LS_DONE, {});
 
+// "Just today" tasks: [{ id, text, day, done_on, position }]
+// day = the date it was added for; done_on = the date it was ticked (or null).
+// It shows on every date from `day` until the date it's ticked — that's the carry-over.
+const LS_ONEOFFS = "checklist.oneoffs";
+const LS_ONEOFF_DELETED = "checklist.oneoffs.deleted";   // removals not yet sent online
+const LS_ONEOFF_SYNCED = "checklist.oneoffs.synced";     // local ones have been uploaded once
+let oneoffs = cleanOneoffs(load(LS_ONEOFFS, []));
+let oneoffDeleted = load(LS_ONEOFF_DELETED, []);
+let oneoffSyncOff = false;   // true when the oneoffs table hasn't been set up in Supabase yet
+
+function cleanOneoffs(list) {
+  return (Array.isArray(list) ? list : [])
+    .filter(o => o && o.id && typeof o.text === "string" && o.day)
+    .map(o => ({ id: o.id, text: o.text, day: o.day, done_on: o.done_on || null, position: Number(o.position) || 0 }))
+    .sort((a, b) => a.position - b.position);
+}
+
 function prune() {
   const cutoff = daysAgoKey(KEEP_DAYS);
   Object.keys(done).forEach(k => { if (k < cutoff) delete done[k]; });
+  oneoffs = oneoffs.filter(o => !o.done_on || o.done_on >= cutoff);
 }
-function saveLocal() { prune(); save(LS_TEMPLATE, template); save(LS_DONE, done); }
+function saveLocal() {
+  prune();
+  save(LS_TEMPLATE, template); save(LS_DONE, done);
+  save(LS_ONEOFFS, oneoffs); save(LS_ONEOFF_DELETED, oneoffDeleted);
+}
+
+function newId() {
+  if (window.crypto && crypto.randomUUID) return crypto.randomUUID();
+  const b = new Uint8Array(16);
+  if (window.crypto && crypto.getRandomValues) crypto.getRandomValues(b); else for (let i = 0; i < 16; i++) b[i] = Math.random() * 256 | 0;
+  b[6] = (b[6] & 15) | 64; b[8] = (b[8] & 63) | 128;
+  const h = [...b].map(x => x.toString(16).padStart(2, "0")).join("");
+  return h.slice(0, 8) + "-" + h.slice(8, 12) + "-" + h.slice(12, 16) + "-" + h.slice(16, 20) + "-" + h.slice(20);
+}
 function isDirty() { return load(LS_DIRTY, false) === true; }
 function setDirty(v) { save(LS_DIRTY, v); }
 
@@ -88,6 +119,32 @@ async function pushTicks(keys) {
   if (rows.length) await must(db.from("ticks").insert(rows));
 }
 
+// "Just today" tasks
+function oneoffRow(o) { return { id: o.id, user_id: user.id, text: o.text, day: o.day, done_on: o.done_on, position: o.position }; }
+async function oneoffTry(fn) {
+  if (oneoffSyncOff) return;
+  try { await fn(); }
+  catch (e) { if (isMissingTable(e)) { oneoffSyncOff = true; return; } throw e; }
+}
+async function pushOneoffs(list) {
+  if (!list.length) return;
+  await oneoffTry(async () => { await must(db.from("oneoffs").upsert(list.map(oneoffRow))); });
+}
+async function pushOneoffDeletes() {
+  if (!oneoffDeleted.length) return;
+  await oneoffTry(async () => {
+    const ids = oneoffDeleted.slice();
+    await must(db.from("oneoffs").delete().eq("user_id", user.id).in("id", ids));
+    oneoffDeleted = oneoffDeleted.filter(id => !ids.includes(id));
+    save(LS_ONEOFF_DELETED, oneoffDeleted);
+  });
+}
+function isMissingTable(e) {
+  const msg = (e && (e.message || "")) + " " + (e && e.details || "");
+  return !!e && (e.code === "42P01" || e.code === "PGRST205" || e.code === "PGRST202" ||
+    (/oneoffs/i.test(msg) && /(does not exist|could not find|schema cache)/i.test(msg)));
+}
+
 // Send everything this device has (used after being offline)
 async function pushEverything() {
   await pushTemplate();
@@ -95,6 +152,8 @@ async function pushEverything() {
   const rows = [];
   Object.keys(done).forEach(day => (done[day] || []).forEach(idx => rows.push({ user_id: user.id, day, idx })));
   if (rows.length) await must(db.from("ticks").insert(rows));
+  await pushOneoffDeletes();
+  await pushOneoffs(oneoffs);
 }
 
 // Run one save; if it fails, remember we're behind and retry everything later
@@ -131,16 +190,42 @@ async function pullAll() {
     const fresh = {};
     (ticks || []).forEach(r => { (fresh[r.day] = fresh[r.day] || []).push(r.idx); });
     done = fresh;
+
+    await pullOneoffs();
+
     saveLocal();
     setStatus("Saved");
 
-    // Old ticks: tidy up on the server too (not urgent if it fails)
+    // Old ticks and finished one-offs: tidy up on the server too (not urgent if it fails)
     db.from("ticks").delete().eq("user_id", user.id).lt("day", daysAgoKey(KEEP_DAYS)).then(() => {}, () => {});
+    if (!oneoffSyncOff) db.from("oneoffs").delete().eq("user_id", user.id).lt("done_on", daysAgoKey(KEEP_DAYS)).then(() => {}, () => {});
 
     redraw(before !== JSON.stringify(template));
   } catch (e) {
     console.warn("Load failed", e);
     setStatus("Offline", true);
+  }
+}
+
+// Fetch "just today" tasks. If the table isn't set up yet, keep them on this device only.
+async function pullOneoffs() {
+  try {
+    const rows = await must(db.from("oneoffs").select("id,text,day,done_on,position").eq("user_id", user.id).order("position"));
+    oneoffSyncOff = false;
+    // First time online: upload anything this device already had
+    if (load(LS_ONEOFF_SYNCED, false) !== true) {
+      const serverIds = new Set((rows || []).map(r => r.id));
+      const localOnly = oneoffs.filter(o => !serverIds.has(o.id));
+      if (localOnly.length) await pushOneoffs(localOnly);
+      save(LS_ONEOFF_SYNCED, true);
+      oneoffs = cleanOneoffs([...(rows || []), ...localOnly]);
+    } else {
+      oneoffs = cleanOneoffs(rows);
+    }
+    if (channel) listenOneoffs();   // table just became available → start live updates
+  } catch (e) {
+    if (!isMissingTable(e)) throw e;
+    oneoffSyncOff = true;   // carry on with the local copy
   }
 }
 
@@ -156,6 +241,15 @@ function listen() {
     .on("postgres_changes", { event: "*", schema: "public", table: "templates", filter }, scheduleRefresh)
     .on("postgres_changes", { event: "*", schema: "public", table: "ticks", filter }, scheduleRefresh)
     .subscribe();
+  if (oneoffChannel) { db.removeChannel(oneoffChannel); oneoffChannel = null; }
+  listenOneoffs();
+}
+let oneoffChannel = null;
+function listenOneoffs() {
+  if (oneoffChannel || oneoffSyncOff || !db || !user) return;
+  oneoffChannel = db.channel("checklist-oneoffs-" + user.id)
+    .on("postgres_changes", { event: "*", schema: "public", table: "oneoffs", filter: "user_id=eq." + user.id }, scheduleRefresh)
+    .subscribe();
 }
 
 async function onSignedIn(u) {
@@ -169,8 +263,12 @@ async function onSignedIn(u) {
 function onSignedOut() {
   user = null;
   if (channel) { db.removeChannel(channel); channel = null; }
+  if (oneoffChannel) { db.removeChannel(oneoffChannel); oneoffChannel = null; }
   template = normalize(null);
   done = {};
+  oneoffs = [];
+  oneoffDeleted = [];
+  save(LS_ONEOFF_SYNCED, false);
   saveLocal();
   setDirty(false);
   show("auth");
@@ -382,9 +480,22 @@ function relLabel(n) {
 
 function updateCount() {
   const tasks = template[viewDate().getDay()] || [];
-  const ticked = (done[currentKey] || []).filter(i => i < tasks.length);
-  const n = ticked.length, total = tasks.length;
-  $("count").textContent = total ? n + " / " + total : "";
+  const wDone = (done[currentKey] || []).filter(i => i < tasks.length).length;
+  const wTotal = tasks.length;
+  const oList = oneoffOn ? oneoffsFor(currentKey) : [];
+  const oDone = oList.filter(o => o.done_on === currentKey).length;
+  const oTotal = oList.length;
+
+  // nav counter (Swiss): everything on the day
+  const all = wTotal + oTotal;
+  $("count").textContent = all ? (wDone + oDone) + " / " + all : "";
+  $("tab-weekly-count").textContent = wTotal ? wDone + " / " + wTotal : "";
+  $("tab-oneoff-count").textContent = oTotal ? oDone + " / " + oTotal : "";
+
+  // progress bar / pills follow whichever list is showing
+  const showingOneoff = oneoffOn && activeTab === "oneoff";
+  const n = showingOneoff ? oDone : wDone;
+  const total = showingOneoff ? oTotal : wTotal;
 
   // progress shown by the Atomic, Notebook and Midnight looks
   $("progress").classList.toggle("hidden", total === 0);
@@ -414,6 +525,18 @@ function renderToday() {
   $("back-today").classList.toggle("hidden", offset === 0);
   $("prev-day").disabled = offset <= MIN_OFFSET;
   $("nav-today").classList.toggle("active", view === "today" && offset === 0);
+
+  // tabs (only when the "just today" list is switched on)
+  $("view-today").classList.toggle("with-tabs", oneoffOn);
+  $("list-tabs").classList.toggle("hidden", !oneoffOn);
+  $("tab-weekly-name").textContent = "Every " + DAYS[dayIndex];
+  $("tab-oneoff-name").textContent = offset === 0 ? "Just today" : "Just " + DAYS[dayIndex];
+  const showOneoff = oneoffOn && activeTab === "oneoff";
+  $("tab-weekly").setAttribute("aria-selected", String(!showOneoff));
+  $("tab-oneoff").setAttribute("aria-selected", String(showOneoff));
+  $("task-list").classList.toggle("hidden", showOneoff);
+  $("oneoff-panel").classList.toggle("hidden", !showOneoff);
+  renderOneoffs();
 
   const list = $("task-list");
   list.innerHTML = "";
@@ -477,6 +600,174 @@ function toggle(i, checked, li) {
     else await must(db.from("ticks").delete().eq("user_id", user.id).eq("day", day).eq("idx", i));
   });
 }
+
+// ---------------------------------------------------------------------
+// "Just today" list
+// ---------------------------------------------------------------------
+let oneoffOn = lsGetRaw("checklist.oneoffs.on") !== "off";
+let activeTab = lsGetRaw("checklist.tab") === "oneoff" ? "oneoff" : "weekly";
+function lsGetRaw(k) { try { return localStorage.getItem(k); } catch { return null; } }
+function lsSetRaw(k, v) { try { localStorage.setItem(k, v); } catch {} }
+
+// What's on the list for a given date: added on/before it, and not ticked before it
+function oneoffsFor(key) {
+  return oneoffs.filter(o => o.day <= key && (!o.done_on || o.done_on >= key));
+}
+
+function fromLabel(day, key) {
+  const [y, m, d] = day.split("-").map(Number);
+  const dt = new Date(y, m - 1, d, 12);
+  const [y2, m2, d2] = key.split("-").map(Number);
+  const gap = Math.round((new Date(y2, m2 - 1, d2, 12) - dt) / 86400000);
+  if (gap === 1) return "From yesterday";
+  if (gap < 7) return "From " + dt.toLocaleDateString("en-GB", { weekday: "short" });
+  return "From " + dt.toLocaleDateString("en-GB", { day: "numeric", month: "short" });
+}
+
+function renderOneoffs() {
+  const list = $("oneoff-list");
+  list.innerHTML = "";
+  const items = oneoffsFor(currentKey);
+  const past = offset < 0;
+
+  $("oneoff-add").classList.toggle("hidden", past);
+  $("oneoff-input").placeholder = offset === 0 ? "Add something for today…" : "Add something for " + DAYS[viewDate().getDay()] + "…";
+  $("oneoff-note").textContent = past
+    ? "What was on the list that day."
+    : "Ticked ones clear the next day. Unticked ones carry over.";
+  if (SYNC_ON && user && oneoffSyncOff) {
+    $("oneoff-note").textContent += " Saved on this device only until supabase-oneoffs.sql has been run.";
+  }
+
+  if (!items.length) {
+    const li = document.createElement("li");
+    li.className = "empty";
+    li.textContent = past ? "Nothing extra that day." : "Nothing extra yet. Add something below.";
+    list.appendChild(li);
+    return;
+  }
+
+  items.forEach(o => {
+    const isDone = o.done_on === currentKey;
+    const li = document.createElement("li");
+    li.className = "task oneoff sortable" + (isDone ? " done" : "");
+
+    const handle = document.createElement("button");
+    handle.type = "button";
+    handle.className = "num handle";
+    handle.innerHTML = '<span class="n plus">+</span>' + HANDLE_GRIP;
+    handle.setAttribute("aria-label", "Move " + o.text + ". Drag, or use the up and down arrow keys");
+
+    const label = document.createElement("label");
+    const cb = document.createElement("input");
+    cb.type = "checkbox";
+    cb.checked = isDone;
+    cb.addEventListener("change", () => toggleOneoff(o.id, cb.checked, li));
+
+    const text = document.createElement("span");
+    text.className = "text";
+    const words = document.createElement("span");
+    words.className = "words";
+    words.textContent = o.text;
+    text.appendChild(words);
+    if (o.day < currentKey) {
+      const tag = document.createElement("span");
+      tag.className = "carried";
+      tag.textContent = fromLabel(o.day, currentKey);
+      text.appendChild(tag);
+    }
+
+    const box = document.createElement("span");
+    box.className = "box";
+    box.innerHTML = CHECK_SVG;
+    label.append(cb, text, box);
+
+    const del = document.createElement("button");
+    del.type = "button";
+    del.className = "oneoff-remove";
+    del.setAttribute("aria-label", "Delete " + o.text);
+    del.innerHTML = '<svg aria-hidden="true" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="square"><path d="M6 6l12 12M18 6L6 18"></path></svg>';
+    del.addEventListener("click", () => removeOneoff(o.id));
+
+    li.append(handle, label, del);
+    list.appendChild(li);
+  });
+
+  const ids = items.map(o => o.id);
+  makeSortable(list,
+    (from, to) => moveOneoff(ids, from, to),
+    (to, kbd) => { renderToday(); refocusHandle($("oneoff-list"), to, kbd); });
+}
+
+function addOneoff(text) {
+  const position = oneoffs.reduce((m, o) => Math.max(m, o.position), -1) + 1;
+  const o = { id: newId(), text, day: currentKey, done_on: null, position };
+  oneoffs.push(o);
+  saveLocal();
+  renderToday();
+  sync(() => pushOneoffs([o]));
+}
+
+function toggleOneoff(id, checked, li) {
+  const o = oneoffs.find(x => x.id === id);
+  if (!o) return;
+  o.done_on = checked ? currentKey : null;
+  saveLocal();
+  li.classList.toggle("done", checked);
+  updateCount();
+  sync(() => pushOneoffs([o]));
+}
+
+function removeOneoff(id) {
+  oneoffs = oneoffs.filter(o => o.id !== id);
+  oneoffDeleted.push(id);
+  saveLocal();
+  renderToday();
+  sync(() => pushOneoffDeletes());
+}
+
+// Reorder within the visible list, keeping everything else where it was
+function moveOneoff(ids, from, to) {
+  if (from === to) return;
+  const newIds = ids.slice();
+  const [m] = newIds.splice(from, 1);
+  newIds.splice(to, 0, m);
+  const slots = ids.map(id => oneoffs.findIndex(o => o.id === id)).sort((a, b) => a - b);
+  const byId = Object.fromEntries(oneoffs.map(o => [o.id, o]));
+  slots.forEach((slot, k) => { oneoffs[slot] = byId[newIds[k]]; });
+  oneoffs.forEach((o, i) => { o.position = i; });
+  saveLocal();
+  sync(() => pushOneoffs(oneoffs));
+}
+
+$("oneoff-add").addEventListener("submit", e => {
+  e.preventDefault();
+  const input = $("oneoff-input");
+  const v = input.value.trim();
+  if (!v) return;
+  input.value = "";
+  addOneoff(v);
+  input.focus();
+});
+
+function setTab(t) {
+  activeTab = t;
+  lsSetRaw("checklist.tab", t);
+  renderToday();
+}
+$("tab-weekly").addEventListener("click", () => setTab("weekly"));
+$("tab-oneoff").addEventListener("click", () => setTab("oneoff"));
+
+function applyOneoffSetting() {
+  document.querySelectorAll("[data-oneoff-option]").forEach(b =>
+    b.setAttribute("aria-pressed", String((b.dataset.oneoffOption === "on") === oneoffOn)));
+}
+document.querySelectorAll("[data-oneoff-option]").forEach(b => b.addEventListener("click", () => {
+  oneoffOn = b.dataset.oneoffOption === "on";
+  lsSetRaw("checklist.oneoffs.on", oneoffOn ? "on" : "off");
+  applyOneoffSetting();
+}));
+applyOneoffSetting();
 
 // ---------------------------------------------------------------------
 // Settings view
@@ -650,7 +941,7 @@ function goToDay(newOffset) {
   const dir = newOffset > offset ? 1 : -1;
   offset = newOffset;
   renderToday();
-  [$("date-inner"), $("task-list")].forEach(el => {
+  [$("date-inner"), $("task-list"), $("oneoff-panel")].forEach(el => {
     el.style.transform = ""; el.style.opacity = "";
     if (el.animate) el.animate(
       [{ transform: "translateX(" + (dir * 40) + "px)", opacity: 0 }, { transform: "none", opacity: 1 }],

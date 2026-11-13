@@ -37,6 +37,10 @@ At this point it already works, but it only saves in each browser separately. Do
 
 The publishable key is designed to be public, so it's fine in a public repo. Your lists are protected by your login. Never paste the **secret** / **service_role** key anywhere in this project.
 
+## 3. "Just today" list (one-off tasks)
+
+To sync one-off tasks between devices, run `supabase-oneoffs.sql` once: **Supabase → SQL Editor → New query**, paste it in, then click **Run**. Until you do, one-off tasks still work, but they're only saved on the device you added them on.
+
 ## Changing things later
 
 Edit any file on GitHub (pencil icon → Commit). The live page updates within a minute or so. If you don't see the change, refresh. On a phone you may need to close and reopen the tab.

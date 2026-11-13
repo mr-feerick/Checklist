@@ -486,6 +486,108 @@ body.is-dragging, body.is-dragging * { cursor: grabbing !important; user-select:
 [data-theme="midnight"] .auth-buttons button { border-radius: 12px; border-width: 2px; text-transform: none; letter-spacing: 0; }
 
 /* =====================================================================
+   "JUST TODAY" LIST — tabs, rows, add box (all looks)
+   ===================================================================== */
+/* Tabs: Swiss base — a full-width two-cell bar */
+.list-tabs { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); border: 3px solid var(--ink); }
+.list-tabs button {
+  display: flex; justify-content: space-between; align-items: baseline; gap: 8px;
+  padding: 14px 16px; min-height: 48px; text-align: left;
+  font-family: var(--font); font-size: 13px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.08em;
+}
+.list-tabs button[aria-selected="true"] { background: var(--ink); color: var(--bg); }
+.list-tabs button:not([aria-selected="true"]):hover { color: var(--accent-text); }
+.list-tabs button:focus-visible { outline: 3px solid var(--accent); outline-offset: 2px; }
+.tab-count { font-weight: 500; white-space: nowrap; }
+/* Swiss: the tab bar replaces the rule under the date */
+[data-theme="swiss"] #view-today.with-tabs header.today { border-bottom: none; padding-bottom: 22px; }
+
+/* One-off rows */
+.num .plus { font-size: 20px; font-weight: 800; color: var(--accent-text); }
+.oneoff .text { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 10px; }
+li.task.oneoff.done .text { text-decoration: none; }
+li.task.oneoff.done .words { text-decoration: line-through; }
+.carried {
+  font-family: var(--font); font-size: 11px; font-weight: 700; letter-spacing: 0.08em; text-transform: uppercase; line-height: 1;
+  color: var(--accent-text); border: 1.5px solid var(--accent-text); padding: 3px 5px; white-space: nowrap;
+}
+.oneoff-remove {
+  width: 36px; min-height: 44px; flex-shrink: 0; display: flex; align-items: center; justify-content: center;
+  color: var(--muted); opacity: 0.6; order: 1;
+}
+.oneoff-remove:hover, .oneoff-remove:focus-visible { color: var(--accent-text); opacity: 1; }
+.oneoff-remove:focus-visible { outline: 3px solid var(--accent); outline-offset: -3px; }
+li.task.oneoff.done .oneoff-remove { opacity: 0.3; }
+li.task.oneoff label { order: 0; }
+[data-theme="swiss"] li.task.oneoff .oneoff-remove { order: 0; margin-left: 4px; }
+
+/* Add box */
+.oneoff-add { display: flex; align-items: center; gap: 16px; min-height: 56px; border-bottom: 1px solid var(--faint); }
+.oneoff-plus { width: 40px; flex-shrink: 0; font-size: 20px; font-weight: 800; color: var(--muted); }
+.oneoff-add input {
+  flex: 1; min-width: 0; font: inherit; font-size: 18px; font-weight: 500; border: none; background: none; color: var(--ink);
+  padding: 12px 0; outline: none; border-radius: 0;
+}
+.oneoff-add input::placeholder { color: var(--muted); opacity: 0.85; }
+.oneoff-add:focus-within { border-bottom-color: var(--accent); box-shadow: inset 0 -1px 0 var(--accent); }
+.oneoff-add .small-btn { padding: 12px 0 12px 8px; }
+.oneoff-note { margin: 12px 0 0; font-size: 13px; color: var(--muted); }
+#oneoff-list .empty { padding: 18px 0; font-size: 16px; }
+
+/* Atomic */
+[data-theme="atomic"] .list-tabs { border-width: 2px; border-radius: 999px; overflow: hidden; margin-bottom: 14px; background: var(--card); }
+[data-theme="atomic"] .list-tabs button { font-weight: 500; letter-spacing: 0.12em; padding: 12px 18px; }
+[data-theme="atomic"] #oneoff-list { display: flex; flex-direction: column; gap: 6px; }
+[data-theme="atomic"] .carried { border-radius: 999px; padding: 4px 8px; font-weight: 500; letter-spacing: 0.1em; border-color: var(--deco-2); color: var(--ink); background: var(--bg); }
+[data-theme="atomic"] .oneoff-add { margin-top: 10px; background: var(--card); border: 2px dashed var(--faint); border-radius: 26px; padding: 0 16px; min-height: 52px; }
+[data-theme="atomic"] .oneoff-add:focus-within { border-color: var(--accent); box-shadow: none; }
+[data-theme="atomic"] .oneoff-plus { width: 24px; color: var(--accent); }
+[data-theme="atomic"] .oneoff-add input { font-size: 18px; font-weight: 400; }
+
+/* Notebook */
+[data-theme="notebook"] .list-tabs { border: none; border-bottom: 1px solid var(--line); padding-left: 64px; gap: 24px; display: flex; }
+[data-theme="notebook"] .list-tabs button {
+  padding: 10px 0; min-height: 44px; font-family: var(--display); font-style: italic; font-weight: 400; font-size: 18px;
+  text-transform: none; letter-spacing: 0; justify-content: flex-start;
+}
+[data-theme="notebook"] .list-tabs button[aria-selected="true"] { background: none; color: var(--accent-text); box-shadow: inset 0 -2px 0 var(--accent); }
+[data-theme="notebook"] .tab-count { font-family: var(--font); font-style: normal; font-size: 14px; color: var(--muted); }
+[data-theme="notebook"] #oneoff-list { border-top: none; }
+[data-theme="notebook"] #view-today.with-tabs .progress { display: none; }
+[data-theme="notebook"] #view-today.with-tabs #task-list { border-top: none; }
+[data-theme="notebook"] .carried { font-style: italic; text-transform: none; letter-spacing: 0; font-weight: 400; font-size: 14px; border: none; padding: 0; }
+[data-theme="notebook"] .oneoff-add { border-bottom-color: var(--line); padding-left: 26px; }
+[data-theme="notebook"] .oneoff-plus { width: 64px; color: var(--accent); font-weight: 400; }
+[data-theme="notebook"] .oneoff-add input { font-size: 20px; font-weight: 400; font-style: italic; }
+[data-theme="notebook"] .oneoff-note, [data-theme="notebook"] #oneoff-list .empty { padding-left: 90px; font-style: italic; }
+
+/* Midnight */
+[data-theme="midnight"] .list-tabs { border: none; background: var(--card); border-radius: 12px; padding: 4px; gap: 4px; margin-bottom: 14px; }
+[data-theme="midnight"] .list-tabs button { border-radius: 9px; padding: 11px 14px; text-transform: none; letter-spacing: 0; font-size: 14px; font-weight: 600; color: var(--muted); }
+[data-theme="midnight"] .list-tabs button[aria-selected="true"] { background: var(--card-2); color: var(--ink); }
+[data-theme="midnight"] #oneoff-list { display: flex; flex-direction: column; gap: 8px; }
+[data-theme="midnight"] .carried { border-radius: 6px; text-transform: none; letter-spacing: 0; font-size: 12px; font-weight: 600; border: none; background: var(--card-2); color: var(--accent-text); padding: 4px 7px; }
+[data-theme="midnight"] .oneoff-add { margin-top: 8px; background: var(--card); border-radius: 14px; border: none; padding: 0 18px; min-height: 56px; gap: 12px; }
+[data-theme="midnight"] .oneoff-add:focus-within { box-shadow: 0 0 0 2px var(--accent); }
+[data-theme="midnight"] .oneoff-plus { width: 22px; color: var(--accent); }
+[data-theme="midnight"] .oneoff-add input { font-size: 16px; }
+[data-theme="midnight"] .oneoff-add .small-btn { text-transform: none; }
+
+/* Settings: text beside an On/Off switch */
+.setting-text { display: flex; flex-direction: column; gap: 4px; flex: 1; min-width: 200px; }
+.setting-text .look-note { margin: 0; }
+
+@media (max-width: 480px) {
+  .list-tabs button { flex-direction: column; align-items: flex-start; gap: 4px; padding: 10px 12px; font-size: 12px; }
+  [data-theme="notebook"] .list-tabs { padding-left: 52px; gap: 18px; }
+  [data-theme="notebook"] .list-tabs button { flex-direction: row; align-items: baseline; font-size: 17px; }
+  [data-theme="notebook"] .oneoff-add { padding-left: 14px; }
+  [data-theme="notebook"] .oneoff-plus { width: 54px; }
+  [data-theme="notebook"] .oneoff-note, [data-theme="notebook"] #oneoff-list .empty { padding-left: 68px; }
+  .oneoff-plus { width: 32px; }
+}
+
+/* =====================================================================
    PHONES
    ===================================================================== */
 @media (max-width: 480px) {
