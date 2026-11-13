@@ -1,7 +1,7 @@
 -- =====================================================================
 -- Daily Checklist — "Just today" list
 -- Paste all of this into Supabase → SQL Editor → New query, then Run.
--- Only needed once. Safe to run more than once.
+-- Safe to run more than once — run it again after updating to get steps (subtasks).
 -- =====================================================================
 
 create table if not exists public.oneoffs (
@@ -11,8 +11,12 @@ create table if not exists public.oneoffs (
   day        date not null,          -- the day it was added for
   done_on    date,                   -- the day it was ticked (empty = still to do, carries over)
   position   int  not null default 0,
+  subs       jsonb not null default '[]'::jsonb,   -- the steps
   created_at timestamptz not null default now()
 );
+
+-- For anyone who ran an earlier version of this script: add the steps column
+alter table public.oneoffs add column if not exists subs jsonb not null default '[]'::jsonb;
 
 create index if not exists oneoffs_user_idx on public.oneoffs (user_id);
 

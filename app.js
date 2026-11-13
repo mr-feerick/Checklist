@@ -32,11 +32,23 @@ function load(key, fallback) {
 function save(key, value) {
   try { localStorage.setItem(key, JSON.stringify(value)); } catch {}
 }
+// A weekly task is { t: "text", s: ["step", "step"] }. Older saves were plain strings.
+function normItem(x) {
+  if (typeof x === "string") return { t: x, s: [] };
+  if (x && typeof x.t === "string") return { t: x.t, s: Array.isArray(x.s) ? x.s.map(String) : [] };
+  return { t: String(x), s: [] };
+}
 function normalize(t) {
   const out = {};
-  for (let i = 0; i < 7; i++) out[i] = Array.isArray(t && t[i]) ? t[i].map(String) : [];
+  for (let i = 0; i < 7; i++) out[i] = Array.isArray(t && t[i]) ? t[i].map(normItem) : [];
   return out;
 }
+
+// Step ticks are stored alongside task ticks: task i → i, step j of task i → (i+1)*1000 + j
+const SUB = 1000;
+const encStep = (i, j) => (i + 1) * SUB + j;
+const isStep = idx => idx >= SUB;
+const decStep = idx => [Math.floor(idx / SUB) - 1, idx % SUB];
 function dateKey(d) {
   return d.getFullYear() + "-" + String(d.getMonth()+1).padStart(2,"0") + "-" + String(d.getDate()).padStart(2,"0");
 }
@@ -57,12 +69,19 @@ let oneoffs = cleanOneoffs(load(LS_ONEOFFS, []));
 let oneoffDeleted = load(LS_ONEOFF_DELETED, []);
 let oneoffSyncOff = false;   // true when the oneoffs table hasn't been set up in Supabase yet
 
+function cleanSubs(list) {
+  return (Array.isArray(list) ? list : [])
+    .filter(s => s && typeof s.text === "string")
+    .map(s => ({ text: s.text, done_on: s.done_on || null }));
+}
 function cleanOneoffs(list) {
   return (Array.isArray(list) ? list : [])
     .filter(o => o && o.id && typeof o.text === "string" && o.day)
-    .map(o => ({ id: o.id, text: o.text, day: o.day, done_on: o.done_on || null, position: Number(o.position) || 0 }))
+    .map(o => ({ id: o.id, text: o.text, day: o.day, done_on: o.done_on || null, position: Number(o.position) || 0, subs: cleanSubs(o.subs) }))
     .sort((a, b) => a.position - b.position);
 }
+let oneoffSubsOff = false;   // true when the oneoffs table has no "subs" column yet
+const LS_SUBS_PENDING = "checklist.oneoffs.subsPending";   // steps made while that column was missing
 
 function prune() {
   const cutoff = daysAgoKey(KEEP_DAYS);
@@ -120,7 +139,15 @@ async function pushTicks(keys) {
 }
 
 // "Just today" tasks
-function oneoffRow(o) { return { id: o.id, user_id: user.id, text: o.text, day: o.day, done_on: o.done_on, position: o.position }; }
+function oneoffRow(o) {
+  const row = { id: o.id, user_id: user.id, text: o.text, day: o.day, done_on: o.done_on, position: o.position };
+  if (!oneoffSubsOff) row.subs = o.subs || [];
+  return row;
+}
+function isMissingSubsColumn(e) {
+  const msg = (e && (e.message || "")) + " " + (e && e.details || "");
+  return !!e && (e.code === "42703" || e.code === "PGRST204" || (/subs/i.test(msg) && /column/i.test(msg)));
+}
 async function oneoffTry(fn) {
   if (oneoffSyncOff) return;
   try { await fn(); }
@@ -128,7 +155,16 @@ async function oneoffTry(fn) {
 }
 async function pushOneoffs(list) {
   if (!list.length) return;
-  await oneoffTry(async () => { await must(db.from("oneoffs").upsert(list.map(oneoffRow))); });
+  if (oneoffSubsOff && list.some(o => o.subs && o.subs.length)) save(LS_SUBS_PENDING, true);
+  await oneoffTry(async () => {
+    try { await must(db.from("oneoffs").upsert(list.map(oneoffRow))); }
+    catch (e) {
+      if (oneoffSubsOff || !isMissingSubsColumn(e)) throw e;
+      oneoffSubsOff = true;   // steps stay on this device until the SQL is re-run
+      if (list.some(o => o.subs && o.subs.length)) save(LS_SUBS_PENDING, true);
+      await must(db.from("oneoffs").upsert(list.map(oneoffRow)));
+    }
+  });
 }
 async function pushOneoffDeletes() {
   if (!oneoffDeleted.length) return;
@@ -210,7 +246,31 @@ async function pullAll() {
 // Fetch "just today" tasks. If the table isn't set up yet, keep them on this device only.
 async function pullOneoffs() {
   try {
-    const rows = await must(db.from("oneoffs").select("id,text,day,done_on,position").eq("user_id", user.id).order("position"));
+    let rows;
+    try {
+      rows = await must(db.from("oneoffs").select("id,text,day,done_on,position,subs").eq("user_id", user.id).order("position"));
+      oneoffSubsOff = false;
+      // Steps added while the column was missing: put them back and upload them now
+      if (load(LS_SUBS_PENDING, false) === true) {
+        const local = Object.fromEntries(oneoffs.map(o => [o.id, o.subs || []]));
+        const fixed = [];
+        rows = rows.map(r => {
+          const ls = local[r.id];
+          if ((!r.subs || !r.subs.length) && ls && ls.length) { const nr = { ...r, subs: ls }; fixed.push(nr.id); return nr; }
+          return r;
+        });
+        if (fixed.length) await pushOneoffs(cleanOneoffs(rows.filter(r => fixed.includes(r.id))));
+        save(LS_SUBS_PENDING, false);
+      }
+    } catch (e) {
+      if (!isMissingSubsColumn(e)) throw e;
+      oneoffSubsOff = true;
+      if (oneoffs.some(o => o.subs && o.subs.length)) save(LS_SUBS_PENDING, true);
+      rows = await must(db.from("oneoffs").select("id,text,day,done_on,position").eq("user_id", user.id).order("position"));
+      // keep the steps this device knows about
+      const local = Object.fromEntries(oneoffs.map(o => [o.id, o.subs || []]));
+      rows = rows.map(r => ({ ...r, subs: local[r.id] || [] }));
+    }
     oneoffSyncOff = false;
     // First time online: upload anything this device already had
     if (load(LS_ONEOFF_SYNCED, false) !== true) {
@@ -335,13 +395,23 @@ $("auth-signup").addEventListener("click", () => handleAuth("signup"));
 // Changing the lists (add / edit / remove / reorder)
 // ---------------------------------------------------------------------
 
-// remap: function(oldIndex) → newIndex, or null if that task was removed.
-// Keeps ticks attached to the right tasks on every date that uses this weekday.
-function templateChanged(d, remap) {
+// remap: function(oldTaskIndex) → newIndex, or null if that task was removed.
+// stepRemap: function(oldTaskIndex, oldStepIndex) → newStepIndex, or null if removed.
+// Keeps ticks attached to the right tasks and steps on every date that uses this weekday.
+function templateChanged(d, remap, stepRemap) {
   let keys = [];
-  if (typeof remap === "function") {
+  if (typeof remap === "function" || typeof stepRemap === "function") {
+    const tr = typeof remap === "function" ? remap : i => i;
+    const sr = typeof stepRemap === "function" ? stepRemap : (i, j) => j;
     keys = Object.keys(done).filter(k => keyWeekday(k) === d);
-    keys.forEach(k => { done[k] = done[k].map(remap).filter(v => v !== null && v !== undefined); });
+    keys.forEach(k => {
+      done[k] = done[k].map(idx => {
+        if (!isStep(idx)) return tr(idx);
+        const [i, j] = decStep(idx);
+        const ni = tr(i), nj = sr(i, j);
+        return ni === null || ni === undefined || nj === null || nj === undefined ? null : encStep(ni, nj);
+      }).filter(v => v !== null && v !== undefined);
+    });
   }
   saveLocal();
 
@@ -352,14 +422,28 @@ function templateChanged(d, remap) {
 }
 
 function addTask(d, text) {
-  template[d].push(text);
+  template[d].push({ t: text, s: [] });
   templateChanged(d);
 }
 
 function editTask(d, i, text) {
-  if (!text || text === template[d][i]) return;
-  template[d][i] = text;
+  if (!text || text === template[d][i].t) return;
+  template[d][i].t = text;
   templateChanged(d);
+}
+
+function addStep(d, i, text) {
+  template[d][i].s.push(text);
+  templateChanged(d);
+}
+function editStep(d, i, j, text) {
+  if (!text || text === template[d][i].s[j]) return;
+  template[d][i].s[j] = text;
+  templateChanged(d);
+}
+function removeStep(d, i, j) {
+  template[d][i].s.splice(j, 1);
+  templateChanged(d, null, (ti, sj) => ti !== i ? sj : sj === j ? null : sj > j ? sj - 1 : sj);
 }
 
 function removeTask(d, i) {
@@ -411,9 +495,10 @@ function makeSortable(list, onMove, afterMove) {
         else if (ev.clientY > window.innerHeight - 70) window.scrollBy(0, 12);
         const dy = ev.pageY - startY;
         li.style.transform = "translateY(" + dy + "px)";
-        const centre = rects[from].top + dy + rects[from].h / 2;
+        // where the pointer is decides the new position (works for tall, opened rows too)
+        const y = ev.pageY;
         to = 0;
-        all.forEach((el, j) => { if (j !== from && rects[j].top + rects[j].h / 2 < centre) to++; });
+        all.forEach((el, j) => { if (j !== from && rects[j].top + rects[j].h / 2 < y) to++; });
         all.forEach((el, j) => {
           if (j === from) return;
           let shift = 0;
@@ -478,12 +563,186 @@ function relLabel(n) {
   return n > 0 ? "In " + n + " days" : -n + " days ago";
 }
 
+// ----- task status (with steps) -----
+function weeklyStatus(item, i, ticked) {
+  const n = item.s.length;
+  if (!n) return { complete: ticked.includes(i), partial: false, k: 0, n: 0 };
+  const k = item.s.filter((_, j) => ticked.includes(encStep(i, j))).length;
+  return { complete: k === n, partial: k > 0 && k < n, k, n };
+}
+function stepDoneOn(s, key) { return !!s.done_on && s.done_on <= key; }
+function oneoffStatus(o, key) {
+  const n = (o.subs || []).length;
+  if (!n) return { complete: o.done_on === key, partial: false, k: 0, n: 0 };
+  const k = o.subs.filter(s => stepDoneOn(s, key)).length;
+  return { complete: k === n, partial: k > 0 && k < n, k, n };
+}
+
+// Which rows are folded open (remembered on this device)
+let openRows = new Set(load("checklist.open", []));
+function setOpen(key, isOpen) {
+  isOpen ? openRows.add(key) : openRows.delete(key);
+  save("checklist.open", [...openRows].slice(-200));
+}
+
+const CHEVRON = '<svg class="chev" aria-hidden="true" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="square"><path d="M6 9l6 6 6-6"></path></svg>';
+const SMALL_X = '<svg aria-hidden="true" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="square"><path d="M6 6l12 12M18 6L6 18"></path></svg>';
+
+// One task row. cfg: { cls, handleHTML, handleLabel, text, tag, status, onToggle(checked),
+//   steps:[{text, done}], stepNum(j), onStep(j, checked), onAddStep(text), onRemoveStep(j),
+//   openKey, alwaysShowSteps, onRemove }
+function buildTaskRow(cfg) {
+  const li = document.createElement("li");
+  const st = cfg.status;
+  li.className = "task sortable " + (cfg.cls || "") + (st.complete ? " done" : "") + (st.partial ? " partial" : "") +
+    (cfg.steps.length ? " has-steps" : "") + (openRows.has(cfg.openKey) ? " open" : "");
+
+  const handle = document.createElement("button");
+  handle.type = "button";
+  handle.className = "num handle";
+  handle.innerHTML = cfg.handleHTML + HANDLE_GRIP;
+  handle.setAttribute("aria-label", cfg.handleLabel);
+
+  const label = document.createElement("label");
+  const cb = document.createElement("input");
+  cb.type = "checkbox";
+  cb.checked = st.complete;
+  cb.addEventListener("change", () => cfg.onToggle(cb.checked, li));
+  const text = document.createElement("span");
+  text.className = "text";
+  const words = document.createElement("span");
+  words.className = "words";
+  words.textContent = cfg.text;
+  text.appendChild(words);
+  if (cfg.tag) {
+    const tag = document.createElement("span");
+    tag.className = "carried";
+    tag.textContent = cfg.tag;
+    text.appendChild(tag);
+  }
+  const box = document.createElement("span");
+  box.className = "box";
+  box.innerHTML = CHECK_SVG + '<span class="dash"></span>';
+  label.append(cb, text, box);
+  li.append(handle, label);
+
+  // fold-out toggle: "1/3 ▾" (or "+ Steps" where steps can be added but there are none yet)
+  const canAdd = typeof cfg.onAddStep === "function";
+  if (cfg.steps.length || (canAdd && cfg.alwaysShowSteps)) {
+    const tog = document.createElement("button");
+    tog.type = "button";
+    tog.className = "step-toggle" + (cfg.steps.length ? "" : " empty");
+    tog.setAttribute("aria-expanded", String(li.classList.contains("open")));
+    tog.setAttribute("aria-label", (cfg.steps.length ? "Steps for " : "Add steps to ") + cfg.text);
+    tog.innerHTML = '<span class="step-count"></span>' + CHEVRON;
+    tog.querySelector(".step-count").textContent = cfg.steps.length ? st.k + "/" + st.n : "+ Steps";
+    tog.addEventListener("click", e => {
+      e.preventDefault();
+      const nowOpen = !li.classList.contains("open");
+      li.classList.toggle("open", nowOpen);
+      tog.setAttribute("aria-expanded", String(nowOpen));
+      setOpen(cfg.openKey, nowOpen);
+      if (nowOpen && !cfg.steps.length) { const inp = li.querySelector(".step-add input"); if (inp) inp.focus(); }
+    });
+    li.appendChild(tog);
+  }
+
+  if (cfg.onRemove) {
+    const del = document.createElement("button");
+    del.type = "button";
+    del.className = "oneoff-remove";
+    del.setAttribute("aria-label", "Delete " + cfg.text);
+    del.innerHTML = '<svg aria-hidden="true" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="square"><path d="M6 6l12 12M18 6L6 18"></path></svg>';
+    del.addEventListener("click", cfg.onRemove);
+    li.appendChild(del);
+  }
+
+  // the steps
+  const ul = document.createElement("ul");
+  ul.className = "steps";
+  cfg.steps.forEach((s, j) => {
+    const sli = document.createElement("li");
+    sli.className = "step" + (s.done ? " done" : "");
+    const sl = document.createElement("label");
+    const scb = document.createElement("input");
+    scb.type = "checkbox";
+    scb.checked = s.done;
+    scb.addEventListener("change", () => cfg.onStep(j, scb.checked, sli, li));
+    const num = document.createElement("span");
+    num.className = "step-num";
+    num.textContent = cfg.stepNum(j);
+    const stx = document.createElement("span");
+    stx.className = "step-text";
+    stx.textContent = s.text;
+    const sbox = document.createElement("span");
+    sbox.className = "box small";
+    sbox.innerHTML = CHECK_SVG;
+    sl.append(scb, num, stx, sbox);
+    sli.appendChild(sl);
+    if (cfg.onRemoveStep) {
+      const x = document.createElement("button");
+      x.type = "button";
+      x.className = "step-remove";
+      x.setAttribute("aria-label", "Delete step " + s.text);
+      x.innerHTML = SMALL_X;
+      x.addEventListener("click", () => cfg.onRemoveStep(j));
+      sli.appendChild(x);
+    }
+    ul.appendChild(sli);
+  });
+  if (canAdd) {
+    const ali = document.createElement("li");
+    ali.className = "step-add";
+    const form = document.createElement("form");
+    form.autocomplete = "off";
+    form.innerHTML = '<span class="step-num" aria-hidden="true">+</span>';
+    const inp = document.createElement("input");
+    inp.type = "text";
+    inp.maxLength = 200;
+    inp.placeholder = cfg.addPlaceholder || "Add a step…";
+    inp.setAttribute("aria-label", "New step for " + cfg.text);
+    const btn = document.createElement("button");
+    btn.type = "submit";
+    btn.className = "small-btn add";
+    btn.textContent = "Add";
+    form.append(inp, btn);
+    form.addEventListener("submit", e => {
+      e.preventDefault();
+      const v = inp.value.trim();
+      if (!v) return;
+      cfg.onAddStep(v);
+    });
+    ali.appendChild(form);
+    ul.appendChild(ali);
+  }
+  li.appendChild(ul);
+  return li;
+}
+
+// Update a row's look after its steps change, without redrawing (keeps the fade smooth)
+function refreshRow(li, st) {
+  li.classList.toggle("done", st.complete);
+  li.classList.toggle("partial", st.partial);
+  const cb = li.querySelector(":scope > label input");
+  if (cb) cb.checked = st.complete;
+  const c = li.querySelector(":scope > .step-toggle .step-count");
+  if (c && st.n) c.textContent = st.k + "/" + st.n;
+}
+
+// After adding a step, keep the cursor in that row's step box
+function refocusStepInput(listId, index) {
+  const row = $(listId).querySelectorAll(":scope > li.task")[index];
+  const inp = row && row.querySelector(".step-add input");
+  if (inp) inp.focus();
+}
+
 function updateCount() {
   const tasks = template[viewDate().getDay()] || [];
-  const wDone = (done[currentKey] || []).filter(i => i < tasks.length).length;
+  const tickedNow = done[currentKey] || [];
+  const wDone = tasks.filter((it, i) => weeklyStatus(it, i, tickedNow).complete).length;
   const wTotal = tasks.length;
   const oList = oneoffOn ? oneoffsFor(currentKey) : [];
-  const oDone = oList.filter(o => o.done_on === currentKey).length;
+  const oDone = oList.filter(o => oneoffStatus(o, currentKey).complete).length;
   const oTotal = oList.length;
 
   // nav counter (Swiss): everything on the day
@@ -550,34 +809,21 @@ function renderToday() {
     return;
   }
 
-  tasks.forEach((text, i) => {
-    const li = document.createElement("li");
-    li.className = "task sortable" + (ticked.includes(i) ? " done" : "");
-
-    // The number is the drag handle
-    const num = document.createElement("button");
-    num.type = "button";
-    num.className = "num handle";
-    num.innerHTML = '<span class="n">' + String(i + 1).padStart(2, "0") + "</span>" + HANDLE_GRIP;
-    num.setAttribute("aria-label", "Move task " + (i + 1) + ". Drag, or use the up and down arrow keys");
-
-    const label = document.createElement("label");
-    const cb = document.createElement("input");
-    cb.type = "checkbox";
-    cb.checked = ticked.includes(i);
-    cb.addEventListener("change", () => toggle(i, cb.checked, li));
-
-    const span = document.createElement("span");
-    span.className = "text";
-    span.textContent = text;
-
-    const box = document.createElement("span");
-    box.className = "box";
-    box.innerHTML = CHECK_SVG;
-
-    label.append(cb, span, box);
-    li.append(num, label);
-    list.appendChild(li);
+  tasks.forEach((item, i) => {
+    const nn = String(i + 1).padStart(2, "0");
+    list.appendChild(buildTaskRow({
+      handleHTML: '<span class="n">' + nn + "</span>",
+      handleLabel: "Move task " + (i + 1) + ". Drag, or use the up and down arrow keys",
+      text: item.t,
+      status: weeklyStatus(item, i, ticked),
+      onToggle: (checked, li) => toggle(i, checked, li),
+      steps: item.s.map((s, j) => ({ text: s, done: ticked.includes(encStep(i, j)) })),
+      stepNum: j => nn + "." + (j + 1),
+      onStep: (j, checked, sli, li) => toggleStep(i, j, checked, sli, li),
+      onAddStep: v => { addStep(dayIndex, i, v); renderToday(); refocusStepInput("task-list", i); },
+      addPlaceholder: "Add a step (every " + DAYS[dayIndex] + ")…",
+      openKey: "w" + dayIndex + ":" + item.t
+    }));
   });
 
   makeSortable(list,
@@ -588,7 +834,24 @@ function renderToday() {
 
 function toggle(i, checked, li) {
   const day = currentKey;
+  const item = template[viewDate().getDay()][i];
   const set = new Set(done[day] || []);
+
+  if (item && item.s.length) {
+    // ticking a task with steps ticks (or unticks) all its steps
+    item.s.forEach((_, j) => checked ? set.add(encStep(i, j)) : set.delete(encStep(i, j)));
+    done[day] = [...set];
+    saveLocal();
+    li.querySelectorAll(".steps li.step").forEach(s => {
+      s.classList.toggle("done", checked);
+      const c = s.querySelector("input"); if (c) c.checked = checked;
+    });
+    refreshRow(li, weeklyStatus(item, i, done[day]));
+    updateCount();
+    sync(() => pushTicks([day]));
+    return;
+  }
+
   checked ? set.add(i) : set.delete(i);
   done[day] = [...set];
   saveLocal();
@@ -598,6 +861,24 @@ function toggle(i, checked, li) {
   sync(async () => {
     if (checked) await must(db.from("ticks").upsert({ user_id: user.id, day, idx: i }, { ignoreDuplicates: true }));
     else await must(db.from("ticks").delete().eq("user_id", user.id).eq("day", day).eq("idx", i));
+  });
+}
+
+function toggleStep(i, j, checked, sli, li) {
+  const day = currentKey;
+  const item = template[viewDate().getDay()][i];
+  const idx = encStep(i, j);
+  const set = new Set(done[day] || []);
+  checked ? set.add(idx) : set.delete(idx);
+  done[day] = [...set];
+  saveLocal();
+  sli.classList.toggle("done", checked);
+  refreshRow(li, weeklyStatus(item, i, done[day]));
+  updateCount();
+
+  sync(async () => {
+    if (checked) await must(db.from("ticks").upsert({ user_id: user.id, day, idx }, { ignoreDuplicates: true }));
+    else await must(db.from("ticks").delete().eq("user_id", user.id).eq("day", day).eq("idx", idx));
   });
 }
 
@@ -637,6 +918,8 @@ function renderOneoffs() {
     : "Ticked ones clear the next day. Unticked ones carry over.";
   if (SYNC_ON && user && oneoffSyncOff) {
     $("oneoff-note").textContent += " Saved on this device only until supabase-oneoffs.sql has been run.";
+  } else if (SYNC_ON && user && oneoffSubsOff) {
+    $("oneoff-note").textContent += " Steps are saved on this device only until supabase-oneoffs.sql is run again.";
   }
 
   if (!items.length) {
@@ -647,50 +930,24 @@ function renderOneoffs() {
     return;
   }
 
-  items.forEach(o => {
-    const isDone = o.done_on === currentKey;
-    const li = document.createElement("li");
-    li.className = "task oneoff sortable" + (isDone ? " done" : "");
-
-    const handle = document.createElement("button");
-    handle.type = "button";
-    handle.className = "num handle";
-    handle.innerHTML = '<span class="n plus">+</span>' + HANDLE_GRIP;
-    handle.setAttribute("aria-label", "Move " + o.text + ". Drag, or use the up and down arrow keys");
-
-    const label = document.createElement("label");
-    const cb = document.createElement("input");
-    cb.type = "checkbox";
-    cb.checked = isDone;
-    cb.addEventListener("change", () => toggleOneoff(o.id, cb.checked, li));
-
-    const text = document.createElement("span");
-    text.className = "text";
-    const words = document.createElement("span");
-    words.className = "words";
-    words.textContent = o.text;
-    text.appendChild(words);
-    if (o.day < currentKey) {
-      const tag = document.createElement("span");
-      tag.className = "carried";
-      tag.textContent = fromLabel(o.day, currentKey);
-      text.appendChild(tag);
-    }
-
-    const box = document.createElement("span");
-    box.className = "box";
-    box.innerHTML = CHECK_SVG;
-    label.append(cb, text, box);
-
-    const del = document.createElement("button");
-    del.type = "button";
-    del.className = "oneoff-remove";
-    del.setAttribute("aria-label", "Delete " + o.text);
-    del.innerHTML = '<svg aria-hidden="true" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="square"><path d="M6 6l12 12M18 6L6 18"></path></svg>';
-    del.addEventListener("click", () => removeOneoff(o.id));
-
-    li.append(handle, label, del);
-    list.appendChild(li);
+  items.forEach((o, pos) => {
+    list.appendChild(buildTaskRow({
+      cls: "oneoff",
+      handleHTML: '<span class="n plus">+</span>',
+      handleLabel: "Move " + o.text + ". Drag, or use the up and down arrow keys",
+      text: o.text,
+      tag: o.day < currentKey ? fromLabel(o.day, currentKey) : "",
+      status: oneoffStatus(o, currentKey),
+      onToggle: (checked, li) => toggleOneoff(o.id, checked, li),
+      steps: (o.subs || []).map(s => ({ text: s.text, done: stepDoneOn(s, currentKey) })),
+      stepNum: j => "+" + (j + 1),
+      onStep: (j, checked, sli, li) => toggleOneoffStep(o.id, j, checked, sli, li),
+      onAddStep: past ? null : v => { addOneoffStep(o.id, v); renderToday(); refocusStepInput("oneoff-list", pos); },
+      onRemoveStep: past ? null : j => removeOneoffStep(o.id, j),
+      alwaysShowSteps: !past,
+      openKey: "o" + o.id,
+      onRemove: () => removeOneoff(o.id)
+    }));
   });
 
   const ids = items.map(o => o.id);
@@ -701,7 +958,7 @@ function renderOneoffs() {
 
 function addOneoff(text) {
   const position = oneoffs.reduce((m, o) => Math.max(m, o.position), -1) + 1;
-  const o = { id: newId(), text, day: currentKey, done_on: null, position };
+  const o = { id: newId(), text, day: currentKey, done_on: null, position, subs: [] };
   oneoffs.push(o);
   saveLocal();
   renderToday();
@@ -712,9 +969,54 @@ function toggleOneoff(id, checked, li) {
   const o = oneoffs.find(x => x.id === id);
   if (!o) return;
   o.done_on = checked ? currentKey : null;
+  if (o.subs && o.subs.length) {
+    // ticking the task ticks all its steps; unticking clears them
+    o.subs.forEach(s => { if (checked) { if (!stepDoneOn(s, currentKey)) s.done_on = currentKey; } else s.done_on = null; });
+    li.querySelectorAll(".steps li.step").forEach(s => {
+      s.classList.toggle("done", checked);
+      const c = s.querySelector("input"); if (c) c.checked = checked;
+    });
+    refreshRow(li, oneoffStatus(o, currentKey));
+  } else {
+    li.classList.toggle("done", checked);
+  }
   saveLocal();
-  li.classList.toggle("done", checked);
   updateCount();
+  sync(() => pushOneoffs([o]));
+}
+
+function toggleOneoffStep(id, j, checked, sli, li) {
+  const o = oneoffs.find(x => x.id === id);
+  if (!o || !o.subs[j]) return;
+  o.subs[j].done_on = checked ? currentKey : null;
+  const st = oneoffStatus(o, currentKey);
+  // the task counts as done on the day its last step is ticked
+  o.done_on = st.complete ? currentKey : null;
+  saveLocal();
+  sli.classList.toggle("done", checked);
+  refreshRow(li, st);
+  updateCount();
+  sync(() => pushOneoffs([o]));
+}
+
+function addOneoffStep(id, text) {
+  const o = oneoffs.find(x => x.id === id);
+  if (!o) return;
+  o.subs = o.subs || [];
+  o.subs.push({ text, done_on: null });
+  if (o.done_on) o.done_on = null;   // a new step means it isn't finished
+  saveLocal();
+  sync(() => pushOneoffs([o]));
+}
+
+function removeOneoffStep(id, j) {
+  const o = oneoffs.find(x => x.id === id);
+  if (!o) return;
+  o.subs.splice(j, 1);
+  const st = oneoffStatus(o, currentKey);
+  if (o.subs.length) o.done_on = st.complete ? (o.done_on || currentKey) : null;
+  saveLocal();
+  renderToday();
   sync(() => pushOneoffs([o]));
 }
 
@@ -789,9 +1091,11 @@ function renderSettings() {
     block.appendChild(h);
     const ul = document.createElement("ul");
 
-    template[d].forEach((text, i) => {
+    template[d].forEach((item, i) => {
+      const text = item.t;
       const li = document.createElement("li");
-      li.className = "sortable";
+      const stepsKey = "s" + d + ":" + text;
+      li.className = "sortable" + (openRows.has(stepsKey) ? " open" : "");
 
       const grip = document.createElement("button");
       grip.type = "button";
@@ -815,7 +1119,75 @@ function renderSettings() {
       del.setAttribute("aria-label", "Remove " + text);
       del.addEventListener("click", () => { removeTask(d, i); renderSettings(); });
 
-      li.append(grip, span, del);
+      // Steps: "+ Steps" or "3 steps ▾"
+      const stepsBtn = document.createElement("button");
+      stepsBtn.type = "button";
+      stepsBtn.className = "small-btn steps-btn" + (item.s.length ? " has" : "");
+      stepsBtn.setAttribute("aria-expanded", String(li.classList.contains("open")));
+      stepsBtn.setAttribute("aria-label", "Steps for " + text);
+      stepsBtn.innerHTML = '<span></span>' + CHEVRON;
+      stepsBtn.querySelector("span").textContent = item.s.length ? item.s.length + (item.s.length === 1 ? " step" : " steps") : "+ Steps";
+      stepsBtn.addEventListener("click", () => {
+        const nowOpen = !li.classList.contains("open");
+        setOpen(stepsKey, nowOpen);
+        renderSettings();
+        if (nowOpen) { const inp = settingsList(d).children[i].querySelector(".step-edit-add input"); if (inp && !item.s.length) inp.focus(); }
+      });
+
+      li.append(grip, span, stepsBtn, del);
+
+      // The step editor (shown when open)
+      const steps = document.createElement("ul");
+      steps.className = "step-editor";
+      item.s.forEach((s, j) => {
+        const sli = document.createElement("li");
+        const sn = document.createElement("span");
+        sn.className = "step-num";
+        sn.textContent = String(i + 1).padStart(2, "0") + "." + (j + 1);
+        const st = document.createElement("button");
+        st.type = "button";
+        st.className = "task-text step-edit-text";
+        st.textContent = s;
+        st.title = "Click to edit";
+        st.setAttribute("aria-label", "Edit step " + s);
+        st.addEventListener("click", () => inlineEdit(st, s, v => { editStep(d, i, j, v); }, () => renderSettings()));
+        const x = document.createElement("button");
+        x.type = "button";
+        x.className = "step-remove";
+        x.setAttribute("aria-label", "Remove step " + s);
+        x.innerHTML = SMALL_X;
+        x.addEventListener("click", () => { removeStep(d, i, j); renderSettings(); });
+        sli.append(sn, st, x);
+        steps.appendChild(sli);
+      });
+      const addStepLi = document.createElement("li");
+      addStepLi.className = "step-edit-add";
+      const asn = document.createElement("span");
+      asn.className = "step-num";
+      asn.textContent = "+";
+      const ain = document.createElement("input");
+      ain.type = "text";
+      ain.placeholder = "Add a step…";
+      ain.maxLength = 200;
+      ain.setAttribute("aria-label", "New step for " + text);
+      const abtn = document.createElement("button");
+      abtn.type = "button";
+      abtn.className = "small-btn add";
+      abtn.textContent = "Add";
+      const addIt = () => {
+        const v = ain.value.trim();
+        if (!v) return;
+        addStep(d, i, v);
+        renderSettings();
+        const again = settingsList(d).children[i].querySelector(".step-edit-add input");
+        if (again) again.focus();
+      };
+      abtn.addEventListener("click", addIt);
+      ain.addEventListener("keydown", e => { if (e.key === "Enter") addIt(); });
+      addStepLi.append(asn, ain, abtn);
+      steps.appendChild(addStepLi);
+      li.appendChild(steps);
+
       ul.appendChild(li);
     });
 
@@ -834,7 +1206,7 @@ function renderSettings() {
       if (!v) return;
       addTask(d, v);
       renderSettings();
-      const fresh = settingsList(d).querySelector("input[placeholder]");
+      const fresh = settingsList(d).querySelector(".add-row input");
       if (fresh) fresh.focus();
     };
     addBtn.addEventListener("click", add);
@@ -853,14 +1225,40 @@ function renderSettings() {
   renderAccount();
 }
 
-// Turn a task row into a text box. Enter or clicking away saves, Esc cancels.
+// Turn a piece of text into a text box. Enter or clicking away saves, Esc cancels.
+function inlineEdit(el, initial, onSave, after) {
+  if (el.dataset.editing) return;
+  el.dataset.editing = "1";
+  const row = el.closest("li");
+  if (row) row.classList.add("editing");
+  const input = document.createElement("input");
+  input.type = "text";
+  input.value = initial;
+  input.setAttribute("aria-label", "Edit");
+  el.replaceWith(input);
+  let finished = false;
+  const finish = keep => {
+    if (finished) return;
+    finished = true;
+    if (keep) onSave(input.value.trim());
+    after();
+  };
+  input.addEventListener("keydown", e => {
+    if (e.key === "Enter") { e.preventDefault(); finish(true); }
+    if (e.key === "Escape") { e.preventDefault(); finish(false); }
+  });
+  input.addEventListener("blur", () => finish(true));
+  input.focus();
+  input.setSelectionRange(input.value.length, input.value.length);
+}
+
 function startEdit(li, d, i) {
   if (li.classList.contains("editing")) return;
   li.classList.add("editing");
   const span = li.querySelector(".task-text");
   const input = document.createElement("input");
   input.type = "text";
-  input.value = template[d][i];
+  input.value = template[d][i].t;
   input.setAttribute("aria-label", "Edit task");
   span.replaceWith(input);
 

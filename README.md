@@ -39,7 +39,9 @@ The publishable key is designed to be public, so it's fine in a public repo. You
 
 ## 3. "Just today" list (one-off tasks)
 
-To sync one-off tasks between devices, run `supabase-oneoffs.sql` once: **Supabase → SQL Editor → New query**, paste it in, then click **Run**. Until you do, one-off tasks still work, but they're only saved on the device you added them on.
+To sync one-off tasks between devices, run `supabase-oneoffs.sql`: **Supabase → SQL Editor → New query**, paste it in, then click **Run**. Until you do, one-off tasks still work, but they're only saved on the device you added them on.
+
+If you ran it before steps (subtasks) were added, run the new version once more. It adds the steps column and leaves your existing tasks alone.
 
 ## Changing things later
 
