@@ -232,13 +232,26 @@ li.task.open > .step-toggle .chev { transform: rotate(180deg); }
 .step-toggle:focus-visible { outline: 3px solid var(--accent); outline-offset: 2px; }
 li.task.done > .step-toggle { opacity: var(--done-opacity); }
 
+/* the "+" next to the number that adds a step */
+.add-step-btn {
+  order: 0; width: 28px; min-height: 44px; margin-left: -8px; flex-shrink: 0;
+  display: flex; align-items: center; justify-content: center; color: var(--muted); opacity: 0.55;
+}
+.add-step-btn:hover, .add-step-btn:focus-visible, li.task.adding > .add-step-btn { color: var(--accent-text); opacity: 1; }
+.add-step-btn:focus-visible { outline: 3px solid var(--accent); outline-offset: -2px; }
+li.task.done > .add-step-btn { opacity: 0.25; }
+li.task > .num { width: 30px; }
+/* the add-a-step box only shows after pressing "+" */
+.steps li.step-add { display: none; }
+li.task.adding > .steps li.step-add { display: flex; }
+
 .steps { display: none; padding-bottom: 8px; }
 li.task.open > .steps { display: block; }
 .steps li { display: flex; align-items: center; border-top: 1px dotted var(--muted); }
 .steps li.step > label { flex: 1; min-width: 0; display: flex; align-items: center; gap: 12px; min-height: 46px; cursor: pointer; position: relative; }
 .steps li.step input { position: absolute; opacity: 0; width: 1px; height: 1px; margin: 0; }
 .step-num {
-  width: 52px; padding-left: 14px; flex-shrink: 0;
+  width: 74px; padding-left: 30px; flex-shrink: 0;
   font-family: var(--font); font-size: 12px; font-weight: 700; color: var(--accent-text); letter-spacing: 0.02em;
 }
 .step-text { flex: 1; min-width: 0; font-size: 16px; font-weight: 500; overflow-wrap: anywhere; }
@@ -630,6 +643,9 @@ li.task.oneoff.done .oneoff-remove { opacity: 0.3; }
 [data-theme="midnight"] .oneoff-add input { font-size: 16px; }
 [data-theme="midnight"] .oneoff-add .small-btn { text-transform: none; }
 
+/* In the other looks the "+" sits beside the grip at the end of the row */
+[data-theme="atomic"] li.task > .add-step-btn, [data-theme="notebook"] li.task > .add-step-btn, [data-theme="midnight"] li.task > .add-step-btn { order: 9; margin-left: 0; }
+[data-theme="atomic"] li.task > .num, [data-theme="notebook"] li.task > .num, [data-theme="midnight"] li.task > .num { width: 32px; }
 /* In the other looks the checkbox comes first in the row */
 [data-theme="atomic"] li.task > label > .box, [data-theme="notebook"] li.task > label > .box, [data-theme="midnight"] li.task > label > .box { order: -1; }
 /* Steps in the other looks: box first, no outline numbers, softer dividers */

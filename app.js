@@ -580,6 +580,7 @@ function oneoffStatus(o, key) {
 
 // Which rows are folded open (remembered on this device)
 let openRows = new Set(load("checklist.open", []));
+let addingKey = null;   // the row whose "add a step" box is showing
 function setOpen(key, isOpen) {
   isOpen ? openRows.add(key) : openRows.delete(key);
   save("checklist.open", [...openRows].slice(-200));
@@ -626,23 +627,44 @@ function buildTaskRow(cfg) {
   label.append(cb, text, box);
   li.append(handle, label);
 
-  // fold-out toggle: "1/3 ▾" (or "+ Steps" where steps can be added but there are none yet)
   const canAdd = typeof cfg.onAddStep === "function";
-  if (cfg.steps.length || (canAdd && cfg.alwaysShowSteps)) {
+  if (canAdd && addingKey === cfg.openKey) li.classList.add("open", "adding");
+
+  // small "+" next to the number: add a step
+  if (canAdd) {
+    const plus = document.createElement("button");
+    plus.type = "button";
+    plus.className = "add-step-btn";
+    plus.setAttribute("aria-label", "Add a step to " + cfg.text);
+    plus.innerHTML = '<svg aria-hidden="true" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="square"><path d="M12 5v14M5 12h14"></path></svg>';
+    plus.addEventListener("click", () => {
+      addingKey = cfg.openKey;
+      li.classList.add("open", "adding");
+      setOpen(cfg.openKey, true);
+      const tg = li.querySelector(":scope > .step-toggle");
+      if (tg) tg.setAttribute("aria-expanded", "true");
+      const inp = li.querySelector(".step-add input");
+      if (inp) inp.focus();
+    });
+    li.insertBefore(plus, label);
+  }
+
+  // fold-out toggle "1/3 ▾" — only on tasks that have steps
+  if (cfg.steps.length) {
     const tog = document.createElement("button");
     tog.type = "button";
-    tog.className = "step-toggle" + (cfg.steps.length ? "" : " empty");
+    tog.className = "step-toggle";
     tog.setAttribute("aria-expanded", String(li.classList.contains("open")));
-    tog.setAttribute("aria-label", (cfg.steps.length ? "Steps for " : "Add steps to ") + cfg.text);
+    tog.setAttribute("aria-label", "Steps for " + cfg.text);
     tog.innerHTML = '<span class="step-count"></span>' + CHEVRON;
-    tog.querySelector(".step-count").textContent = cfg.steps.length ? st.k + "/" + st.n : "+ Steps";
+    tog.querySelector(".step-count").textContent = st.k + "/" + st.n;
     tog.addEventListener("click", e => {
       e.preventDefault();
       const nowOpen = !li.classList.contains("open");
       li.classList.toggle("open", nowOpen);
+      if (!nowOpen) { li.classList.remove("adding"); if (addingKey === cfg.openKey) addingKey = null; }
       tog.setAttribute("aria-expanded", String(nowOpen));
       setOpen(cfg.openKey, nowOpen);
-      if (nowOpen && !cfg.steps.length) { const inp = li.querySelector(".step-add input"); if (inp) inp.focus(); }
     });
     li.appendChild(tog);
   }
@@ -710,8 +732,21 @@ function buildTaskRow(cfg) {
       e.preventDefault();
       const v = inp.value.trim();
       if (!v) return;
+      addingKey = cfg.openKey;   // keep the box open for the next step
       cfg.onAddStep(v);
     });
+    // Esc, or leaving the box empty, closes it again
+    const stopAdding = () => {
+      if (addingKey === cfg.openKey) addingKey = null;
+      li.classList.remove("adding");
+      if (!cfg.steps.length) { li.classList.remove("open"); setOpen(cfg.openKey, false); }
+    };
+    inp.addEventListener("keydown", e => { if (e.key === "Escape") { e.preventDefault(); inp.value = ""; stopAdding(); inp.blur(); } });
+    inp.addEventListener("blur", () => setTimeout(() => {
+      if (!inp.isConnected || document.activeElement === inp || inp.value.trim()) return;
+      if (form.contains(document.activeElement)) return;
+      stopAdding();
+    }, 150));
     ali.appendChild(form);
     ul.appendChild(ali);
   }
@@ -931,20 +966,20 @@ function renderOneoffs() {
   }
 
   items.forEach((o, pos) => {
+    const nn = String(pos + 1).padStart(2, "0");
     list.appendChild(buildTaskRow({
       cls: "oneoff",
-      handleHTML: '<span class="n plus">+</span>',
+      handleHTML: '<span class="n">' + nn + "</span>",
       handleLabel: "Move " + o.text + ". Drag, or use the up and down arrow keys",
       text: o.text,
       tag: o.day < currentKey ? fromLabel(o.day, currentKey) : "",
       status: oneoffStatus(o, currentKey),
       onToggle: (checked, li) => toggleOneoff(o.id, checked, li),
       steps: (o.subs || []).map(s => ({ text: s.text, done: stepDoneOn(s, currentKey) })),
-      stepNum: j => "+" + (j + 1),
+      stepNum: j => nn + "." + (j + 1),
       onStep: (j, checked, sli, li) => toggleOneoffStep(o.id, j, checked, sli, li),
       onAddStep: past ? null : v => { addOneoffStep(o.id, v); renderToday(); refocusStepInput("oneoff-list", pos); },
       onRemoveStep: past ? null : j => removeOneoffStep(o.id, j),
-      alwaysShowSteps: !past,
       openKey: "o" + o.id,
       onRemove: () => removeOneoff(o.id)
     }));
