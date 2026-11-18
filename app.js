@@ -1204,6 +1204,7 @@ function settingsList(d) {
   return $("settings-days").children[ORDER.indexOf(d)].querySelector("ul");
 }
 
+let settingsAdding = null;   // which Settings task has its "add a step" box open
 function renderSettings() {
   const wrap = $("settings-days");
   wrap.innerHTML = "";
@@ -1220,8 +1221,10 @@ function renderSettings() {
     template[d].forEach((item, i) => {
       const text = item.t;
       const li = document.createElement("li");
-      const stepsKey = "s" + d + ":" + text;
-      li.className = "sortable" + (openRows.has(stepsKey) ? " open" : "");
+      const stepsKey = "s" + d + ":" + i;
+      const adding = settingsAdding === stepsKey;
+      // steps show under a task only when it has some (or while you're adding one)
+      li.className = "sortable" + (item.s.length ? " has-steps" : "") + (adding ? " adding" : "");
 
       const grip = document.createElement("button");
       grip.type = "button";
@@ -1245,22 +1248,20 @@ function renderSettings() {
       del.setAttribute("aria-label", "Remove " + text);
       del.addEventListener("click", () => { removeTask(d, i); renderSettings(); });
 
-      // Steps: "+ Steps" or "3 steps ▾"
-      const stepsBtn = document.createElement("button");
-      stepsBtn.type = "button";
-      stepsBtn.className = "small-btn steps-btn" + (item.s.length ? " has" : "");
-      stepsBtn.setAttribute("aria-expanded", String(li.classList.contains("open")));
-      stepsBtn.setAttribute("aria-label", "Steps for " + text);
-      stepsBtn.innerHTML = '<span></span>' + CHEVRON;
-      stepsBtn.querySelector("span").textContent = item.s.length ? item.s.length + (item.s.length === 1 ? " step" : " steps") : "+ Steps";
-      stepsBtn.addEventListener("click", () => {
-        const nowOpen = !li.classList.contains("open");
-        setOpen(stepsKey, nowOpen);
+      // "+" beside the grip adds a step — the same as on the Today screen
+      const plus = document.createElement("button");
+      plus.type = "button";
+      plus.className = "add-step-btn";
+      plus.setAttribute("aria-label", "Add a step to " + text);
+      plus.innerHTML = '<svg aria-hidden="true" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="square"><path d="M12 5v14M5 12h14"></path></svg>';
+      plus.addEventListener("click", () => {
+        settingsAdding = stepsKey;
         renderSettings();
-        if (nowOpen) { const inp = settingsList(d).children[i].querySelector(".step-edit-add input"); if (inp && !item.s.length) inp.focus(); }
+        const inp = settingsList(d).children[i].querySelector(".step-edit-add input");
+        if (inp) inp.focus();
       });
 
-      li.append(grip, span, stepsBtn, del);
+      li.append(grip, plus, span, del);
 
       // The step editor (shown when open)
       const steps = document.createElement("ul");
@@ -1303,13 +1304,22 @@ function renderSettings() {
       const addIt = () => {
         const v = ain.value.trim();
         if (!v) return;
+        settingsAdding = stepsKey;   // keep the box open for the next one
         addStep(d, i, v);
         renderSettings();
         const again = settingsList(d).children[i].querySelector(".step-edit-add input");
         if (again) again.focus();
       };
       abtn.addEventListener("click", addIt);
-      ain.addEventListener("keydown", e => { if (e.key === "Enter") addIt(); });
+      ain.addEventListener("keydown", e => {
+        if (e.key === "Enter") addIt();
+        if (e.key === "Escape") { e.preventDefault(); settingsAdding = null; renderSettings(); }
+      });
+      // leaving the box empty closes it again
+      ain.addEventListener("blur", () => setTimeout(() => {
+        if (!ain.isConnected || ain.value.trim() || addStepLi.contains(document.activeElement)) return;
+        if (settingsAdding === stepsKey) { settingsAdding = null; renderSettings(); }
+      }, 150));
       addStepLi.append(asn, ain, abtn);
       steps.appendChild(addStepLi);
       li.appendChild(steps);

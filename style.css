@@ -707,8 +707,11 @@ li.task.oneoff.done .oneoff-remove { opacity: 0.3; }
 .steps-btn.has .chev { display: block; width: 14px; height: 14px; transition: transform 0.2s ease; }
 .day-block li.sortable { flex-wrap: wrap; }
 .day-block li.sortable.open > .steps-btn .chev { transform: rotate(180deg); }
-.step-editor { display: none; flex: 0 0 calc(100% - 32px); min-width: 0; margin: 0 0 10px 32px; padding-left: 14px; border-left: 3px solid var(--ink); }
-.day-block li.sortable.open > .step-editor { display: block; }
+.step-editor { display: none; flex: 0 0 calc(100% - 44px); min-width: 0; margin: 0 0 10px 44px; padding-left: 14px; border-left: 3px solid var(--ink); }
+.day-block li.sortable.has-steps > .step-editor, .day-block li.sortable.adding > .step-editor { display: block; }
+.day-block .step-edit-add { display: none !important; }
+.day-block li.sortable.adding .step-edit-add { display: flex !important; }
+.day-block li.sortable > .add-step-btn { margin-left: -6px; }
 .step-editor li { display: flex; align-items: center; gap: 8px; border-bottom: 1px solid var(--faint); min-height: 40px; }
 .step-editor li:last-child { border-bottom: none; }
 .step-editor .step-num { width: auto; padding-left: 0; min-width: 34px; }
