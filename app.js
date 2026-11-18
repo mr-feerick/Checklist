@@ -785,6 +785,9 @@ function updateCount() {
   $("count").textContent = all ? (wDone + oDone) + " / " + all : "";
   $("tab-weekly-count").textContent = wTotal ? wDone + " / " + wTotal : "";
   $("tab-oneoff-count").textContent = oTotal ? oDone + " / " + oTotal : "";
+  // a dot on any tab that still has something left to do
+  $("tab-weekly").classList.toggle("has-left", wDone < wTotal);
+  $("tab-oneoff").classList.toggle("has-left", oDone < oTotal);
 
   // progress bar / pills follow whichever list is showing
   const showingOneoff = oneoffOn && activeTab === "oneoff";

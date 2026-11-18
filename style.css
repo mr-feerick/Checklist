@@ -27,6 +27,7 @@
    THEMES — colours and fonts
    ===================================================================== */
 :root, [data-theme="swiss"] {
+  --alert: #D4301F;
   --font: "Inter Tight", system-ui, sans-serif;
   --display: "Inter Tight", system-ui, sans-serif;
   --bg: #FFFFFF; --ink: #111111; --muted: #555555; --faint: #DDDDDD;
@@ -37,6 +38,7 @@
   color-scheme: light;
 }
 [data-theme="swiss"][data-mode="dark"] {
+  --alert: #FF5240;
   --bg: #0E0E0E; --ink: #F2F0EB; --muted: #9A9893; --faint: #2A2A2A;
   --accent: #FF5240; --accent-text: #FF5240; --on-accent: #0E0E0E;
   --line: #F2F0EB; --card-2: #F2F0EB;
@@ -45,6 +47,7 @@
 }
 
 [data-theme="atomic"] {
+  --alert: #C4572E;
   --font: "Jost", system-ui, sans-serif;
   --display: "Jost", system-ui, sans-serif;
   --bg: #F3EBDD; --ink: #2B2620; --muted: #5E554B; --faint: #E3D8C6;
@@ -57,6 +60,7 @@
   color-scheme: light;
 }
 [data-theme="atomic"][data-mode="dark"] {
+  --alert: #E06A3E;
   --bg: #1C1814; --ink: #F3EBDD; --muted: #B5AA9B; --faint: #3A332B;
   --accent: #5BB3AC; --accent-text: #5BB3AC; --on-accent: #1C1814;
   --card: #2A241E; --card-2: #F3EBDD;
@@ -67,6 +71,7 @@
 }
 
 [data-theme="notebook"] {
+  --alert: #C8372D;
   --font: "Newsreader", Georgia, serif;
   --display: "Fraunces", Georgia, serif;
   --bg: #FBFAF6; --ink: #23211E; --muted: #5C574F; --faint: #E6E1D6;
@@ -78,6 +83,7 @@
   color-scheme: light;
 }
 [data-theme="notebook"][data-mode="dark"] {
+  --alert: #FF6B5E;
   --bg: #181A20; --ink: #E8E4DA; --muted: #A39D90; --faint: #2A2E38;
   --accent: #9DB2FF; --accent-text: #9DB2FF; --on-accent: #181A20;
   --line: #2F3646; --card-2: #9DB2FF;
@@ -87,6 +93,7 @@
 }
 
 [data-theme="midnight"] {
+  --alert: #C77A00;
   --font: "Inter", system-ui, sans-serif;
   --display: "Inter", system-ui, sans-serif;
   --bg: #F3F3F1; --ink: #16171A; --muted: #5F636B; --faint: #E2E2DE;
@@ -97,6 +104,7 @@
   color-scheme: light;
 }
 [data-theme="midnight"][data-mode="dark"] {
+  --alert: #F2B84B;
   --bg: #111214; --ink: #ECEAE6; --muted: #9AA0AA; --faint: #2A2D33;
   --accent: #F2B84B; --accent-text: #F2B84B; --on-accent: #111214;
   --card: #1B1D21; --card-2: #2A2D33;
@@ -571,6 +579,20 @@ body.is-dragging, body.is-dragging * { cursor: grabbing !important; user-select:
 .list-tabs button:not([aria-selected="true"]):hover { color: var(--accent-text); }
 .list-tabs button:focus-visible { outline: 3px solid var(--accent); outline-offset: 2px; }
 .tab-count { font-weight: 500; white-space: nowrap; }
+/* Dot: this list still has tasks left. Colour = --alert (set per look above). */
+.tab-label { display: inline-flex; align-items: center; gap: 8px; min-width: 0; }
+.tab-dot {
+  display: none; width: 9px; height: 9px; border-radius: 50%; flex-shrink: 0;
+  background: var(--alert); box-shadow: 0 0 0 2px var(--dot-ring, var(--bg));
+}
+.list-tabs button.has-left .tab-dot { display: inline-block; }
+.list-tabs button[aria-selected="true"] { --dot-ring: var(--ink); }
+[data-theme="atomic"] .list-tabs button { --dot-ring: var(--card); }
+[data-theme="atomic"] .list-tabs button[aria-selected="true"] { --dot-ring: var(--ink); }
+[data-theme="notebook"] .list-tabs button, [data-theme="notebook"] .list-tabs button[aria-selected="true"] { --dot-ring: var(--bg); }
+[data-theme="midnight"] .list-tabs button { --dot-ring: var(--card); }
+[data-theme="midnight"] .list-tabs button[aria-selected="true"] { --dot-ring: var(--card-2); }
+.sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; border: 0; }
 /* Swiss: the tab bar replaces the rule under the date */
 [data-theme="swiss"] #view-today.with-tabs header.today { border-bottom: none; padding-bottom: 22px; }
 
