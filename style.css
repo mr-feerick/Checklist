@@ -1054,3 +1054,69 @@ li.task.oneoff.done .oneoff-remove { opacity: 0.3; }
   [data-theme="notebook"] .wk-missed { padding-left: 94px; }
   [data-theme="notebook"] .wk-summary { padding-left: 52px; }
 }
+
+/* =====================================================================
+   CARRY OVER — "Not done yesterday" card above the lists
+   ===================================================================== */
+.carry { border: 3px solid var(--ink); margin: 22px 0 4px; }
+.carry-head { display: flex; justify-content: space-between; align-items: baseline; gap: 12px; padding: 14px 16px 10px; border-bottom: 2px solid var(--ink); }
+.carry-title { margin: 0; font-family: var(--font); font-size: 13px; font-weight: 700; letter-spacing: 0.08em; text-transform: uppercase; }
+.carry-from { font-size: 12px; font-weight: 700; letter-spacing: 0.08em; text-transform: uppercase; color: var(--muted); white-space: nowrap; }
+.carry-list { list-style: none; margin: 0; padding: 0 16px; }
+.carry-item { border-bottom: 1px solid var(--faint, var(--line)); }
+.carry-item label { display: flex; align-items: center; gap: 14px; min-height: 48px; padding: 6px 0; cursor: pointer; font-size: 18px; font-weight: 500; }
+.carry-item input { width: 22px; height: 22px; margin: 0; flex-shrink: 0; accent-color: var(--accent); cursor: pointer; }
+.carry-text { flex: 1; min-width: 0; overflow-wrap: anywhere; }
+.carry-item.already label { cursor: default; color: var(--muted); }
+.carry-item.already .carry-text { text-decoration: line-through; text-decoration-thickness: 1.5px; }
+.carry-note { font-size: 12px; font-weight: 500; color: var(--muted); white-space: nowrap; }
+.carry-actions { display: flex; flex-wrap: wrap; gap: 10px; padding: 14px 16px 16px; }
+.carry-move, .carry-dismiss {
+  min-height: 44px; padding: 0 16px; border: 2.5px solid var(--ink);
+  font-family: var(--font); font-size: 13px; font-weight: 700; letter-spacing: 0.08em; text-transform: uppercase;
+}
+.carry-move { background: var(--accent); color: var(--on-accent); }
+.carry-move:disabled { opacity: 0.4; cursor: default; }
+.carry-dismiss { background: var(--bg); color: var(--ink); }
+.carry-dismiss:hover { background: var(--ink); color: var(--bg); }
+.carry-move:focus-visible, .carry-dismiss:focus-visible, .carry-item input:focus-visible { outline: 3px solid var(--accent); outline-offset: 2px; }
+
+[data-theme="atomic"] .carry { border: none; background: var(--card); border-radius: 22px; margin-bottom: 14px; }
+[data-theme="atomic"] .carry-head { border-bottom: 1.5px solid var(--line); padding: 16px 20px 12px; }
+[data-theme="atomic"] .carry-title, [data-theme="atomic"] .carry-from { font-weight: 500; letter-spacing: 0.12em; }
+[data-theme="atomic"] .carry-list { padding: 0 20px; }
+[data-theme="atomic"] .carry-item label { font-weight: 400; }
+[data-theme="atomic"] .carry-actions { padding: 14px 20px 18px; }
+[data-theme="atomic"] .carry-move, [data-theme="atomic"] .carry-dismiss { border-radius: 999px; border-width: 2px; font-weight: 500; letter-spacing: 0.12em; }
+[data-theme="atomic"] .carry-dismiss { background: transparent; }
+
+[data-theme="notebook"] .carry { border: none; border-top: 1px solid var(--line); border-bottom: 1px solid var(--line); margin: 14px 0 10px; }
+[data-theme="notebook"] .carry-head { border-bottom: 1px solid var(--line); padding: 12px 0 8px 64px; }
+[data-theme="notebook"] .carry-title { text-transform: none; letter-spacing: 0; font-family: var(--display); font-size: 22px; font-weight: 600; color: var(--accent-text); }
+[data-theme="notebook"] .carry-from { text-transform: none; letter-spacing: 0; font-style: italic; font-weight: 400; font-size: 15px; }
+[data-theme="notebook"] .carry-list { padding: 0 0 0 64px; }
+[data-theme="notebook"] .carry-item label { font-size: 20px; font-weight: 400; }
+[data-theme="notebook"] .carry-note { font-style: italic; font-size: 14px; }
+[data-theme="notebook"] .carry-actions { padding: 12px 0 14px 64px; }
+[data-theme="notebook"] .carry-move, [data-theme="notebook"] .carry-dismiss { border-width: 1.5px; border-radius: 4px; text-transform: none; letter-spacing: 0; font-style: italic; font-weight: 500; font-size: 16px; }
+
+[data-theme="midnight"] .carry { border: none; background: var(--card); border-radius: 14px; margin: 8px 0 16px; }
+[data-theme="midnight"] .carry-head { border-bottom: 1px solid var(--card-2); padding: 14px 18px 10px; }
+[data-theme="midnight"] .carry-title, [data-theme="midnight"] .carry-from { text-transform: none; letter-spacing: 0; font-size: 14px; font-weight: 600; }
+[data-theme="midnight"] .carry-list { padding: 0 18px; }
+[data-theme="midnight"] .carry-item { border-bottom-color: var(--card-2); }
+[data-theme="midnight"] .carry-item label { font-size: 16px; }
+[data-theme="midnight"] .carry-actions { padding: 14px 18px 16px; }
+[data-theme="midnight"] .carry-move, [data-theme="midnight"] .carry-dismiss { border: none; border-radius: 10px; text-transform: none; letter-spacing: 0; font-weight: 600; font-size: 14px; }
+[data-theme="midnight"] .carry-dismiss { background: var(--card-2); }
+[data-theme="midnight"] .carry-move { color: var(--on-accent); }
+
+@media (max-width: 480px) {
+  .carry { margin-top: 16px; }
+  .carry-head, .carry-list, .carry-actions { padding-left: 14px; padding-right: 14px; }
+  .carry-item label { font-size: 17px; }
+  .carry-actions { display: grid; grid-template-columns: 1fr auto; gap: 8px; }
+  .carry-move, .carry-dismiss { font-size: 12px; padding: 0 12px; }
+  .carry-note { white-space: normal; text-align: right; max-width: 110px; }
+  [data-theme="notebook"] .carry-head, [data-theme="notebook"] .carry-list, [data-theme="notebook"] .carry-actions { padding-left: 52px; padding-right: 0; }
+}

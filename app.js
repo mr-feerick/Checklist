@@ -406,6 +406,7 @@ function templateChanged(d, remap, stepRemap) {
     keys = Object.keys(done).filter(k => keyWeekday(k) === d);
     keys.forEach(k => {
       done[k] = done[k].map(idx => {
+        if (idx < 0) return idx;                       // carry-over marker, not a task
         if (!isStep(idx)) return tr(idx);
         const [i, j] = decStep(idx);
         const ni = tr(i), nj = sr(i, j);
@@ -480,7 +481,7 @@ function savedTicks(d, match) {
 function restoreTicks(d, saved, shift) {
   const keys = Object.keys(done).filter(k => keyWeekday(k) === d);
   Object.keys(saved).forEach(k => { if (!keys.includes(k)) keys.push(k); });
-  keys.forEach(k => { done[k] = (done[k] || []).map(shift).concat(saved[k] || []); });
+  keys.forEach(k => { done[k] = (done[k] || []).map(x => x < 0 ? x : shift(x)).concat(saved[k] || []); });
   saveLocal();
   sync(async () => { await pushTemplate(); await pushTicks(keys); });
 }
@@ -942,6 +943,7 @@ function renderToday() {
   $("task-list").classList.toggle("hidden", showOneoff);
   $("oneoff-panel").classList.toggle("hidden", !showOneoff);
   renderOneoffs();
+  renderCarry();
 
   const list = $("task-list");
   list.innerHTML = "";
@@ -1524,6 +1526,127 @@ function redraw(listsChanged) {
 }
 
 $("nav-today").addEventListener("click", () => show("today"));
+
+// ---------------------------------------------------------------------
+// Carry over: on a new day, offer last time's unfinished weekly tasks
+// ---------------------------------------------------------------------
+const CARRY_DONE = -1;          // stored as a tick on the earlier day = "already dealt with"
+const CARRY_LOOKBACK = 7;       // look back this far for the last day that had tasks
+
+// The last earlier day with weekly tasks, and what wasn't finished on it
+function carrySource() {
+  for (let n = 1; n <= CARRY_LOOKBACK; n++) {
+    const key = daysAgoKey(n);
+    const tasks = template[keyWeekday(key)] || [];
+    if (!tasks.length) continue;              // a day with nothing set: keep looking back
+    const ticked = done[key] || [];
+    if (ticked.includes(CARRY_DONE)) return null;
+    const left = [];
+    tasks.forEach((it, i) => { if (!weeklyStatus(it, i, ticked).complete) left.push(i); });
+    return left.length ? { key, left } : null;
+  }
+  return null;
+}
+
+let carryPick = {};             // which rows are ticked to move (by task number)
+let carryFor = null;            // the day the card is about
+function renderCarry() {
+  const card = $("carry");
+  const src = offset === 0 && oneoffOn ? carrySource() : null;
+  card.classList.toggle("hidden", !src);
+  if (!src) { carryFor = null; return; }
+  if (carryFor !== src.key) { carryFor = src.key; carryPick = {}; }
+
+  const tasks = template[keyWeekday(src.key)];
+  const today = todayKey();
+  const onToday = new Set((template[keyWeekday(today)] || []).map(t => t.t.trim().toLowerCase()));
+  oneoffsFor(today).forEach(o => { if (!oneoffStatus(o, today).complete) onToday.add(o.text.trim().toLowerCase()); });
+
+  const gap = Math.round((new Date(today + "T12:00") - new Date(src.key + "T12:00")) / 86400000);
+  const dt = new Date(src.key + "T12:00");
+  $("carry-title").textContent = gap === 1 ? "Not done yesterday" : "Not done on " + DAYS[dt.getDay()];
+  $("carry-from").textContent = dt.toLocaleDateString("en-GB", { weekday: "short", day: "numeric" });
+
+  const list = $("carry-list");
+  list.innerHTML = "";
+  let movable = 0;
+  src.left.forEach(i => {
+    const text = tasks[i].t;
+    const already = onToday.has(text.trim().toLowerCase());
+    const li = document.createElement("li");
+    li.className = "carry-item" + (already ? " already" : "");
+    const label = document.createElement("label");
+    const box = document.createElement("input");
+    box.type = "checkbox";
+    box.disabled = already;
+    box.checked = !already && carryPick[i] !== false;
+    box.addEventListener("change", () => { carryPick[i] = box.checked; updateCarryButton(); });
+    const words = document.createElement("span");
+    words.className = "carry-text";
+    words.textContent = text;
+    label.append(box, words);
+    if (already) {
+      const note = document.createElement("span");
+      note.className = "carry-note";
+      note.textContent = "Already on today's list";
+      label.appendChild(note);
+    } else movable++;
+    li.appendChild(label);
+    list.appendChild(li);
+  });
+  $("carry-move").classList.toggle("hidden", movable === 0);
+  updateCarryButton();
+}
+function carryChosen() {
+  return [...$("carry-list").querySelectorAll("input")].map((b, n) => ({ b, n })).filter(x => x.b.checked && !x.b.disabled);
+}
+function updateCarryButton() {
+  const n = carryChosen().length;
+  const btn = $("carry-move");
+  btn.disabled = n === 0;
+  btn.textContent = n ? "Move " + n + " to Just today" : "Move to Just today";
+}
+
+function finishCarry(move) {
+  const src = carrySource();
+  if (!src) { renderToday(); return; }
+  const key = src.key;
+  const tasks = template[keyWeekday(key)];
+  const today = todayKey();
+  const boxes = [...$("carry-list").querySelectorAll("input")];
+  const picked = move ? src.left.filter((i, n) => boxes[n] && boxes[n].checked && !boxes[n].disabled) : [];
+
+  const before = (done[key] || []).slice();
+  const set = new Set(before);
+  set.add(CARRY_DONE);
+  const made = [];
+  let position = oneoffs.reduce((m, o) => Math.max(m, o.position), -1) + 1;
+  picked.forEach(i => {
+    const it = tasks[i];
+    // a moved task counts as done on the day it came from…
+    if (it.s.length) it.s.forEach((_, j) => set.add(encStep(i, j))); else set.add(i);
+    // …and carries on in Just today, with any steps that weren't finished
+    const subs = it.s.filter((_, j) => !before.includes(encStep(i, j))).map(t => ({ text: t, done_on: null }));
+    made.push({ id: newId(), text: it.t, day: today, done_on: null, position: position++, subs });
+  });
+  done[key] = [...set];
+  oneoffs.push(...made);
+  saveLocal();
+  if (made.length) { activeTab = "oneoff"; lsSetRaw("checklist.tab", "oneoff"); }
+  renderToday();
+  sync(async () => { await pushTicks([key]); await pushOneoffs(made); });
+
+  const ids = made.map(o => o.id);
+  offerUndo("", () => {
+    done[key] = before;
+    oneoffs = oneoffs.filter(o => !ids.includes(o.id));
+    oneoffDeleted.push(...ids);
+    saveLocal();
+    sync(async () => { await pushTicks([key]); await pushOneoffDeletes(); });
+  }, made.length ? "Moved " + made.length + " to Just today" : "Dismissed");
+}
+$("carry-move").addEventListener("click", () => finishCarry(true));
+$("carry-dismiss").addEventListener("click", () => finishCarry(false));
 $("nav-settings").addEventListener("click", () => show("settings"));
 $("nav-week").addEventListener("click", () => show("week"));
 
@@ -1781,10 +1904,10 @@ applyLook();
 // ---------------------------------------------------------------------
 let undoTimer = null;
 let undoAction = null;
-function offerUndo(what, restore) {
+function offerUndo(what, restore, message) {
   const bar = $("toast");
   undoAction = restore;
-  $("toast-text").textContent = "Deleted “" + what + "”";
+  $("toast-text").textContent = message || "Deleted “" + what + "”";
   bar.classList.remove("hidden");
   (window.requestAnimationFrame || (f => setTimeout(f, 16)))(() => bar.classList.add("show"));
   startUndoTimer();

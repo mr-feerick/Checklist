@@ -6,7 +6,7 @@
 // - Supabase (your data): never touched here — always goes to the internet.
 // Bump VERSION if you ever want to force every device to re-download everything.
 // =====================================================================
-const VERSION = "v2";
+const VERSION = "v3";
 const CACHE = "checklist-" + VERSION;
 const SHELL = [
   "./", "index.html", "style.css", "app.js", "config.js", "manifest.webmanifest",

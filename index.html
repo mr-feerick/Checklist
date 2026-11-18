@@ -122,6 +122,19 @@
 
   <!-- TODAY -->
   <section id="view-today" class="hidden">
+    <!-- Yesterday's unfinished weekly tasks: move them to Just today, or dismiss -->
+    <section id="carry" class="carry hidden" aria-labelledby="carry-title">
+      <div class="carry-head">
+        <h2 id="carry-title" class="carry-title">Not done yesterday</h2>
+        <span class="carry-from" id="carry-from"></span>
+      </div>
+      <ul class="carry-list" id="carry-list"></ul>
+      <div class="carry-actions">
+        <button type="button" class="carry-move" id="carry-move">Move to Just today</button>
+        <button type="button" class="carry-dismiss" id="carry-dismiss">Dismiss</button>
+      </div>
+    </section>
+
     <!-- Switch between the weekly list and the "just today" list -->
     <div id="list-tabs" class="list-tabs hidden" role="tablist" aria-label="Lists">
       <button type="button" role="tab" id="tab-weekly" aria-controls="task-list" aria-selected="true">
