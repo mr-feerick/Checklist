@@ -817,6 +817,23 @@ function refocusStepInput(listId, key) {
   if (inp) inp.focus();
 }
 
+function tallySVG(n, total) {
+  if (!total) return "";
+  const tilt = [0.8, -0.5, 1, -0.7];
+  let lines = "";
+  for (let k = 0; k < total; k++) {
+    const g = Math.floor(k / 5), i = k % 5, x0 = g * 60, cls = k < n ? "on" : "off";
+    if (i < 4) {
+      const x = x0 + 7 + i * 11, t = tilt[i];
+      lines += '<line class="' + cls + '" x1="' + (x - t) + '" y1="4" x2="' + (x + t) + '" y2="30"></line>';
+    } else {
+      lines += '<line class="' + cls + '" x1="' + (x0 + 1) + '" y1="25" x2="' + (x0 + 47) + '" y2="9"></line>';
+    }
+  }
+  const w = Math.ceil(total / 5) * 60;
+  return '<svg aria-hidden="true" width="' + w + '" height="34" viewBox="0 0 ' + w + ' 34">' + lines + "</svg>";
+}
+
 function updateCount() {
   const tasks = template[viewDate().getDay()] || [];
   const tickedNow = done[currentKey] || [];
@@ -855,7 +872,11 @@ function updateCount() {
   }
   [...pills.children].forEach((p, i) => p.classList.toggle("on", i < n));
   $("progress-fill").style.width = total ? (n / total * 100) + "%" : "0";
-  $("progress-text").textContent = total ? n + " of " + total + " done" : "";
+  $("progress-text").textContent = total ? n + " of " + total + (theme === "notebook" ? " ticked off" : " done") : "";
+  // Swiss: "3 left" beside the blocks
+  $("progress-left").textContent = !total ? "" : n === total ? "All done" : (total - n) + " left";
+  // Notebook: hand-drawn tally marks, grouped in fives (ink = done, pencil = to do)
+  $("progress-tally").innerHTML = tallySVG(n, total);
 }
 
 function renderToday() {
@@ -1540,6 +1561,7 @@ function applyLook() {
     b.setAttribute("aria-pressed", String(b.dataset.themeOption === theme)));
   document.querySelectorAll("[data-mode-option]").forEach(b =>
     b.setAttribute("aria-pressed", String(b.dataset.modeOption === mode)));
+  if (currentKey) updateCount();   // progress wording differs per look
 }
 
 document.querySelectorAll("[data-theme-option]").forEach(b => b.addEventListener("click", () => {
