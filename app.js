@@ -595,14 +595,18 @@ const SMALL_X = '<svg aria-hidden="true" width="12" height="12" viewBox="0 0 24 
 function buildTaskRow(cfg) {
   const li = document.createElement("li");
   const st = cfg.status;
-  li.className = "task sortable " + (cfg.cls || "") + (st.complete ? " done" : "") + (st.partial ? " partial" : "") +
+  // finished tasks sit at the bottom and can't be dragged
+  const locked = st.complete;
+  li.className = "task " + (locked ? "locked " : "sortable ") + (cfg.cls || "") + (st.complete ? " done" : "") + (st.partial ? " partial" : "") +
     (cfg.steps.length ? " has-steps" : "") + (openRows.has(cfg.openKey) ? " open" : "");
+  if (cfg.key) li.dataset.key = cfg.key;
 
-  const handle = document.createElement("button");
-  handle.type = "button";
-  handle.className = "num handle";
+  const handle = document.createElement(locked ? "span" : "button");
+  if (!locked) handle.type = "button";
+  handle.className = locked ? "num" : "num handle";
   handle.innerHTML = cfg.handleHTML + HANDLE_GRIP;
-  handle.setAttribute("aria-label", cfg.handleLabel);
+  if (locked) handle.setAttribute("aria-hidden", "true");
+  else handle.setAttribute("aria-label", cfg.handleLabel);
 
   const label = document.createElement("label");
   const cb = document.createElement("input");
@@ -764,9 +768,51 @@ function refreshRow(li, st) {
   if (c && st.n) c.textContent = st.k + "/" + st.n;
 }
 
+// After a tick, let the fade play, then move rows to their new places with a slide
+let settleTimer = null;
+function scheduleSettle() {
+  clearTimeout(settleTimer);
+  settleTimer = setTimeout(settle, 550);
+}
+function typingInLists() {
+  const a = document.activeElement;
+  return !!a && a.tagName === "INPUT" && a.type === "text" && !!a.closest("#task-list, #oneoff-list") && a.value.trim() !== "";
+}
+// Redraw Today, keeping the cursor in the same row's box or checkbox
+function renderTodayKeepFocus() {
+  const a = document.activeElement;
+  const row = a && a.closest ? a.closest("li.task[data-key]") : null;
+  const key = row ? row.dataset.key : null;
+  const inStepBox = !!(a && a.closest && a.closest(".step-add"));
+  renderToday();
+  if (!key) return;
+  const r = document.querySelector('li.task[data-key="' + key + '"]');
+  const target = r && (inStepBox ? r.querySelector(".step-add input") : r.querySelector(":scope > label > input"));
+  if (target) target.focus({ preventScroll: true });
+}
+function settle() {
+  if (dragging) { scheduleSettle(); return; }
+  // don't wipe a step you're halfway through typing — wait until you leave the box
+  if (typingInLists()) {
+    document.activeElement.addEventListener("blur", () => setTimeout(scheduleSettle, 200), { once: true });
+    return;
+  }
+  const lists = [$("task-list"), $("oneoff-list")];
+  const before = {};
+  lists.forEach(l => l.querySelectorAll(":scope > li.task[data-key]").forEach(li => { before[li.dataset.key] = li.getBoundingClientRect().top; }));
+  renderTodayKeepFocus();
+  const reduce = window.matchMedia && matchMedia("(prefers-reduced-motion: reduce)").matches;
+  lists.forEach(l => l.querySelectorAll(":scope > li.task[data-key]").forEach(li => {
+    const old = before[li.dataset.key];
+    if (old === undefined || reduce) return;
+    const dy = old - li.getBoundingClientRect().top;
+    if (Math.abs(dy) > 1 && li.animate) li.animate([{ transform: "translateY(" + dy + "px)" }, { transform: "none" }], { duration: 320, easing: "cubic-bezier(.2,.7,.2,1)" });
+  }));
+}
+
 // After adding a step, keep the cursor in that row's step box
-function refocusStepInput(listId, index) {
-  const row = $(listId).querySelectorAll(":scope > li.task")[index];
+function refocusStepInput(listId, key) {
+  const row = $(listId).querySelector(':scope > li.task[data-key="' + key + '"]');
   const inp = row && row.querySelector(".step-add input");
   if (inp) inp.focus();
 }
@@ -854,25 +900,31 @@ function renderToday() {
     return;
   }
 
-  tasks.forEach((item, i) => {
-    const nn = String(i + 1).padStart(2, "0");
+  // active tasks first (in your order), finished ones underneath
+  const wActive = [], wDoneIdx = [];
+  tasks.forEach((item, i) => (weeklyStatus(item, i, ticked).complete ? wDoneIdx : wActive).push(i));
+  [...wActive, ...wDoneIdx].forEach((i, pos) => {
+    const item = tasks[i];
+    const nn = String(pos + 1).padStart(2, "0");
     list.appendChild(buildTaskRow({
+      key: "w" + i,
       handleHTML: '<span class="n">' + nn + "</span>",
-      handleLabel: "Move task " + (i + 1) + ". Drag, or use the up and down arrow keys",
+      handleLabel: "Move task " + (pos + 1) + ". Drag, or use the up and down arrow keys",
       text: item.t,
       status: weeklyStatus(item, i, ticked),
       onToggle: (checked, li) => toggle(i, checked, li),
       steps: item.s.map((s, j) => ({ text: s, done: ticked.includes(encStep(i, j)) })),
       stepNum: j => nn + "." + (j + 1),
       onStep: (j, checked, sli, li) => toggleStep(i, j, checked, sli, li),
-      onAddStep: v => { addStep(dayIndex, i, v); renderToday(); refocusStepInput("task-list", i); },
+      onAddStep: v => { addStep(dayIndex, i, v); renderToday(); refocusStepInput("task-list", "w" + i); },
       addPlaceholder: "Add a step (every " + DAYS[dayIndex] + ")…",
       openKey: "w" + dayIndex + ":" + item.t
     }));
   });
 
+  // only active tasks can be dragged; positions map back to your real order
   makeSortable(list,
-    (from, to) => moveTask(dayIndex, from, to),
+    (from, to) => moveTask(dayIndex, wActive[from], wActive[to]),
     (to, kbd) => { renderToday(); refocusHandle($("task-list"), to, kbd); });
   updateCount();
 }
@@ -893,6 +945,7 @@ function toggle(i, checked, li) {
     });
     refreshRow(li, weeklyStatus(item, i, done[day]));
     updateCount();
+    scheduleSettle();
     sync(() => pushTicks([day]));
     return;
   }
@@ -902,6 +955,7 @@ function toggle(i, checked, li) {
   saveLocal();
   li.classList.toggle("done", checked);
   updateCount();
+  scheduleSettle();
 
   sync(async () => {
     if (checked) await must(db.from("ticks").upsert({ user_id: user.id, day, idx: i }, { ignoreDuplicates: true }));
@@ -920,6 +974,7 @@ function toggleStep(i, j, checked, sli, li) {
   sli.classList.toggle("done", checked);
   refreshRow(li, weeklyStatus(item, i, done[day]));
   updateCount();
+  scheduleSettle();
 
   sync(async () => {
     if (checked) await must(db.from("ticks").upsert({ user_id: user.id, day, idx }, { ignoreDuplicates: true }));
@@ -975,9 +1030,12 @@ function renderOneoffs() {
     return;
   }
 
-  items.forEach((o, pos) => {
+  const oActive = items.filter(o => !oneoffStatus(o, currentKey).complete);
+  const oFinished = items.filter(o => oneoffStatus(o, currentKey).complete);
+  [...oActive, ...oFinished].forEach((o, pos) => {
     const nn = String(pos + 1).padStart(2, "0");
     list.appendChild(buildTaskRow({
+      key: "o" + o.id,
       cls: "oneoff",
       handleHTML: '<span class="n">' + nn + "</span>",
       handleLabel: "Move " + o.text + ". Drag, or use the up and down arrow keys",
@@ -988,14 +1046,14 @@ function renderOneoffs() {
       steps: (o.subs || []).map(s => ({ text: s.text, done: stepDoneOn(s, currentKey) })),
       stepNum: j => nn + "." + (j + 1),
       onStep: (j, checked, sli, li) => toggleOneoffStep(o.id, j, checked, sli, li),
-      onAddStep: past ? null : v => { addOneoffStep(o.id, v); renderToday(); refocusStepInput("oneoff-list", pos); },
+      onAddStep: past ? null : v => { addOneoffStep(o.id, v); renderToday(); refocusStepInput("oneoff-list", "o" + o.id); },
       onRemoveStep: past ? null : j => removeOneoffStep(o.id, j),
       openKey: "o" + o.id,
       onRemove: () => removeOneoff(o.id)
     }));
   });
 
-  const ids = items.map(o => o.id);
+  const ids = oActive.map(o => o.id);
   makeSortable(list,
     (from, to) => moveOneoff(ids, from, to),
     (to, kbd) => { renderToday(); refocusHandle($("oneoff-list"), to, kbd); });
@@ -1027,6 +1085,7 @@ function toggleOneoff(id, checked, li) {
   }
   saveLocal();
   updateCount();
+  scheduleSettle();
   sync(() => pushOneoffs([o]));
 }
 
@@ -1041,6 +1100,7 @@ function toggleOneoffStep(id, j, checked, sli, li) {
   sli.classList.toggle("done", checked);
   refreshRow(li, st);
   updateCount();
+  scheduleSettle();
   sync(() => pushOneoffs([o]));
 }
 
@@ -1366,7 +1426,7 @@ function show(v) {
 // Redraw after new data arrives, without interrupting a drag or an edit
 function redraw(listsChanged) {
   if (dragging) { pendingRedraw = true; return; }
-  if (view === "today") renderToday();
+  if (view === "today") { if (typingInLists()) scheduleSettle(); else renderTodayKeepFocus(); }
   if (view === "settings" && listsChanged) {
     const typing = document.activeElement && $("view-settings").contains(document.activeElement)
       && document.activeElement.tagName === "INPUT";

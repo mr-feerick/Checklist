@@ -286,6 +286,10 @@ li.task.open > .steps { display: block; }
 .empty { padding: 24px 0; color: var(--muted); font-size: 18px; }
 
 /* ---------- Drag to reorder ---------- */
+/* finished tasks are locked at the bottom: no dragging */
+li.task.locked > .num { cursor: default; }
+li.task.locked > .num:hover { color: var(--muted); }
+li.task.locked > .num .g { visibility: hidden; }
 .sortable { transition: transform 0.15s ease; background: var(--bg); }
 .sortable.dragging { transition: none; position: relative; z-index: 5; box-shadow: 0 10px 24px rgba(0, 0, 0, 0.25); }
 .handle:focus-visible { outline: 3px solid var(--accent); outline-offset: 2px; }
