@@ -21,24 +21,64 @@
 </head>
 <body>
 <div class="app">
+  <aside class="panel" id="panel">
+    <!-- Desktop poster art (only shown on wide screens) -->
+    <svg class="panel-art art-atomic" aria-hidden="true" viewBox="0 0 560 900" preserveAspectRatio="xMidYMax slice">
+      <circle class="a-sun" cx="430" cy="610" r="190"></circle>
+      <path class="a-half" d="M240 900 A170 170 0 0 1 580 900 Z"></path>
+      <circle class="a-ring" cx="150" cy="720" r="46"></circle>
+      <g class="a-star"><line x1="470" y1="250" x2="470" y2="320"></line><line x1="435" y1="285" x2="505" y2="285"></line><line x1="445" y1="260" x2="495" y2="310"></line><line x1="495" y1="260" x2="445" y2="310"></line></g>
+      <circle class="a-star-dot" cx="470" cy="285" r="7"></circle>
+    </svg>
+    <nav id="nav" class="hidden">
+      <div class="tabs">
+        <button id="nav-today" class="active">Today</button>
+        <button id="nav-settings">Settings</button>
+      </div>
+      <div class="nav-right">
+        <span id="count"></span>
+        <span id="sync-status"></span>
+      </div>
+    </nav>
+    <div class="panel-body">
+      <div class="settings-head hidden" data-view="auth">
+        <h1>Daily<br>checklist</h1>
+        <p>Sign in to load your tasks on this device.</p>
+      </div>
+      <header class="today hidden" id="date-header" data-view="today">
+        <div class="date-inner" id="date-inner">
+          <p id="day-num"></p>
+          <div class="day-label">
+            <div class="rel-row">
+              <span id="rel-tag" class="rel-tag"></span>
+              <button id="back-today" class="back-today hidden" type="button">Back to today</button>
+            </div>
+            <span id="full-date"></span>
+            <h1 id="day-name"></h1>
+            <span id="month-year"></span>
+          </div>
+        </div>
+        <div class="day-arrows">
+          <button id="prev-day" type="button" aria-label="Previous day">
+            <svg aria-hidden="true" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="square"><path d="M15 5l-7 7 7 7"></path></svg>
+          </button>
+          <button id="next-day" type="button" aria-label="Next day">
+            <svg aria-hidden="true" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="square"><path d="M9 5l7 7-7 7"></path></svg>
+          </button>
+        </div>
+      </header>
+      <div class="settings-head hidden" data-view="settings">
+        <h1>Weekly<br>tasks</h1>
+        <p>Each day repeats these tasks every week.</p>
+      </div>
+      <div class="panel-ring hidden" id="panel-ring" data-view="today" aria-hidden="true"><span class="ring-n" id="ring-n"></span><span class="ring-of" id="ring-of"></span></div>
+    </div>
+  </aside>
 
-  <nav id="nav" class="hidden">
-    <div class="tabs">
-      <button id="nav-today" class="active">Today</button>
-      <button id="nav-settings">Settings</button>
-    </div>
-    <div class="nav-right">
-      <span id="count"></span>
-      <span id="sync-status"></span>
-    </div>
-  </nav>
+  <main class="content">
 
   <!-- SIGN IN (only shown when online saving is set up) -->
   <section id="view-auth" class="hidden">
-    <div class="settings-head">
-      <h1>Daily<br>checklist</h1>
-      <p>Sign in to load your tasks on this device.</p>
-    </div>
     <form id="auth-form" class="auth-form">
       <label>Email
         <input id="auth-email" type="email" autocomplete="email" required>
@@ -56,28 +96,6 @@
 
   <!-- TODAY -->
   <section id="view-today" class="hidden">
-    <header class="today" id="date-header">
-      <div class="date-inner" id="date-inner">
-        <p id="day-num"></p>
-        <div class="day-label">
-          <div class="rel-row">
-            <span id="rel-tag" class="rel-tag"></span>
-            <button id="back-today" class="back-today hidden" type="button">Back to today</button>
-          </div>
-          <span id="full-date"></span>
-          <h1 id="day-name"></h1>
-          <span id="month-year"></span>
-        </div>
-      </div>
-      <div class="day-arrows">
-        <button id="prev-day" type="button" aria-label="Previous day">
-          <svg aria-hidden="true" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="square"><path d="M15 5l-7 7 7 7"></path></svg>
-        </button>
-        <button id="next-day" type="button" aria-label="Next day">
-          <svg aria-hidden="true" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="square"><path d="M9 5l7 7-7 7"></path></svg>
-        </button>
-      </div>
-    </header>
     <!-- Switch between the weekly list and the "just today" list -->
     <div id="list-tabs" class="list-tabs hidden" role="tablist" aria-label="Lists">
       <button type="button" role="tab" id="tab-weekly" aria-controls="task-list" aria-selected="true">
@@ -106,10 +124,6 @@
 
   <!-- SETTINGS -->
   <section id="view-settings" class="hidden">
-    <div class="settings-head">
-      <h1>Weekly<br>tasks</h1>
-      <p>Each day repeats these tasks every week.</p>
-    </div>
 
     <div class="look-block">
       <div class="mode-row">
@@ -159,6 +173,7 @@
     <div id="account" class="account"></div>
   </section>
 
+  </main>
 </div>
 
 <!-- Supabase library (online saving). Safe to leave in even if sync is off. -->

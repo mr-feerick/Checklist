@@ -785,6 +785,12 @@ function updateCount() {
   $("count").textContent = all ? (wDone + oDone) + " / " + all : "";
   $("tab-weekly-count").textContent = wTotal ? wDone + " / " + wTotal : "";
   $("tab-oneoff-count").textContent = oTotal ? oDone + " / " + oTotal : "";
+  // Midnight's desktop ring: everything done today, across both lists
+  const ringPct = all ? Math.round((wDone + oDone) / all * 100) : 0;
+  $("panel-ring").style.setProperty("--pct", ringPct);
+  $("ring-n").textContent = all ? String(wDone + oDone) : "–";
+  $("ring-of").textContent = all ? "of " + all + " done" : "nothing set";
+
   // a dot on any tab that still has something left to do
   $("tab-weekly").classList.toggle("has-left", wDone < wTotal);
   $("tab-oneoff").classList.toggle("has-left", oDone < oTotal);
@@ -825,6 +831,7 @@ function renderToday() {
 
   // tabs (only when the "just today" list is switched on)
   $("view-today").classList.toggle("with-tabs", oneoffOn);
+  document.body.classList.toggle("with-tabs", oneoffOn);
   $("list-tabs").classList.toggle("hidden", !oneoffOn);
   $("tab-weekly-name").textContent = "Every " + DAYS[dayIndex];
   $("tab-oneoff-name").textContent = offset === 0 ? "Just today" : "Just " + DAYS[dayIndex];
@@ -1342,6 +1349,9 @@ let view = null;
 
 function show(v) {
   view = v;
+  // the side panel's heading for this screen (date / "Weekly tasks" / sign-in)
+  document.querySelectorAll("#panel [data-view]").forEach(el => el.classList.toggle("hidden", el.dataset.view !== v));
+  document.body.dataset.view = v;
   $("view-auth").classList.toggle("hidden", v !== "auth");
   $("view-today").classList.toggle("hidden", v !== "today");
   $("view-settings").classList.toggle("hidden", v !== "settings");
