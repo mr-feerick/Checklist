@@ -7,7 +7,7 @@
 
 const DAYS = ["Sunday","Monday","Tuesday","Wednesday","Thursday","Friday","Saturday"];
 const ORDER = [1,2,3,4,5,6,0];          // Monday first in Settings
-const KEEP_DAYS = 14;                   // how many days of ticks to keep
+const KEEP_DAYS = 63;                   // how many days of ticks to keep (9 weeks, for the Week page)
 const LS_TEMPLATE = "checklist.template";
 const LS_DONE = "checklist.done";
 const LS_DIRTY = "checklist.dirty";     // true = local changes not yet saved online
@@ -1500,11 +1500,14 @@ function show(v) {
   $("view-auth").classList.toggle("hidden", v !== "auth");
   $("view-today").classList.toggle("hidden", v !== "today");
   $("view-settings").classList.toggle("hidden", v !== "settings");
+  $("view-week").classList.toggle("hidden", v !== "week");
   $("nav").classList.toggle("hidden", v === "auth");
   $("nav-today").classList.toggle("active", v === "today");
+  $("nav-week").classList.toggle("active", v === "week");
   $("nav-settings").classList.toggle("active", v === "settings");
   $("count").classList.toggle("hidden", v !== "today");
   if (v === "today") { offset = 0; renderToday(); }
+  if (v === "week") { weekOffset = 0; renderWeek(); }
   if (v === "settings") renderSettings();
 }
 
@@ -1512,6 +1515,7 @@ function show(v) {
 function redraw(listsChanged) {
   if (dragging) { pendingRedraw = true; return; }
   if (view === "today") { if (typingInLists()) scheduleSettle(); else renderTodayKeepFocus(); }
+  if (view === "week") renderWeek();
   if (view === "settings" && listsChanged) {
     const typing = document.activeElement && $("view-settings").contains(document.activeElement)
       && document.activeElement.tagName === "INPUT";
@@ -1521,6 +1525,134 @@ function redraw(listsChanged) {
 
 $("nav-today").addEventListener("click", () => show("today"));
 $("nav-settings").addEventListener("click", () => show("settings"));
+$("nav-week").addEventListener("click", () => show("week"));
+
+// ---------------------------------------------------------------------
+// Week page: each day's progress, what was missed, the week's total
+// ---------------------------------------------------------------------
+let weekOffset = 0;                                   // 0 = this week, -1 = last week …
+const MIN_WEEK = -Math.floor((KEEP_DAYS - 7) / 7);    // as far back as we keep ticks
+const DAY_SHORT = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+
+function weekDays(off) {
+  const t = new Date(); t.setHours(12, 0, 0, 0);
+  const mon = new Date(t); mon.setDate(t.getDate() - ((t.getDay() + 6) % 7) + off * 7);
+  return Array.from({ length: 7 }, (_, i) => { const d = new Date(mon); d.setDate(mon.getDate() + i); return d; });
+}
+function isoWeek(d) {
+  const x = new Date(Date.UTC(d.getFullYear(), d.getMonth(), d.getDate()));
+  const day = x.getUTCDay() || 7;
+  x.setUTCDate(x.getUTCDate() + 4 - day);
+  const y0 = new Date(Date.UTC(x.getUTCFullYear(), 0, 1));
+  return Math.ceil(((x - y0) / 86400000 + 1) / 7);
+}
+
+// Everything on a given date: weekly tasks for that weekday + "just today" tasks
+function dayStats(key) {
+  const tasks = template[keyWeekday(key)] || [];
+  const ticked = done[key] || [];
+  const items = tasks.map((it, i) => ({ text: it.t, done: weeklyStatus(it, i, ticked).complete }));
+  if (oneoffOn) oneoffsFor(key).forEach(o => items.push({ text: o.text, done: oneoffStatus(o, key).complete, oneoff: true }));
+  const n = items.filter(x => x.done).length;
+  return { n, t: items.length, missed: items.filter(x => !x.done).map(x => x.text), weeklyMissed: items.filter(x => !x.done && !x.oneoff).map(x => x.text) };
+}
+
+function renderWeek() {
+  const days = weekDays(weekOffset);
+  const today = todayKey();
+  const wk = isoWeek(days[0]);
+  const first = days[0], last = days[6];
+  const mon = d => d.toLocaleDateString("en-GB", { month: "short" });
+  const range = first.getMonth() === last.getMonth()
+    ? first.getDate() + "–" + last.getDate() + " " + mon(last)
+    : first.getDate() + " " + mon(first) + " – " + last.getDate() + " " + mon(last);
+
+  // header
+  $("wk-num").textContent = String(wk).padStart(2, "0");
+  $("wk-kicker").textContent = "Week " + wk;
+  $("wk-range").textContent = range;
+  $("wk-year").textContent = String(last.getFullYear());
+  $("wk-tag").textContent = weekOffset === 0 ? "This week" : weekOffset === -1 ? "Last week" : -weekOffset + " weeks ago";
+  $("week-header").classList.toggle("is-today", weekOffset === 0);
+  $("wk-back").classList.toggle("hidden", weekOffset === 0);
+  $("wk-prev").disabled = weekOffset <= MIN_WEEK;
+  $("wk-next").disabled = weekOffset >= 0;
+
+  // one row per day
+  const list = $("week-list");
+  list.innerHTML = "";
+  let sumN = 0, sumT = 0;
+  const skips = {};
+  days.forEach(d => {
+    const key = dateKey(d);
+    const st = dayStats(key);
+    const isToday = key === today, future = key > today, past = key < today;
+    if (!future) { sumN += st.n; sumT += st.t; }
+    if (past) st.weeklyMissed.forEach(t => { skips[t] = (skips[t] || 0) + 1; });
+
+    const li = document.createElement("li");
+    li.className = "wk-day" + (isToday ? " is-today" : "") + (future ? " future" : "") + (st.t && st.n === st.t ? " all-done" : "");
+    const btn = document.createElement("button");
+    btn.type = "button";
+    btn.className = "wk-row";
+    btn.setAttribute("aria-label", d.toLocaleDateString("en-GB", { weekday: "long", day: "numeric", month: "long" }) +
+      ": " + st.n + " of " + st.t + " done. Open this day");
+    const num = document.createElement("span"); num.className = "wk-dnum"; num.textContent = d.getDate();
+    const name = document.createElement("span"); name.className = "wk-dname"; name.textContent = DAY_SHORT[d.getDay()] + (isToday ? " · today" : "");
+    const bar = document.createElement("span"); bar.className = "wk-bar";
+    if (st.t) {
+      const blocks = document.createElement("span"); blocks.className = "wk-blocks";
+      for (let k = 0; k < st.t; k++) { const c = document.createElement("span"); if (k < st.n) c.className = "on"; blocks.appendChild(c); }
+      const tally = document.createElement("span"); tally.className = "wk-tally"; tally.innerHTML = tallySVG(st.n, st.t);
+      bar.append(blocks, tally);
+    } else {
+      const none = document.createElement("span"); none.className = "wk-none"; none.textContent = "Nothing set";
+      bar.appendChild(none);
+    }
+    const count = document.createElement("span"); count.className = "wk-count"; count.textContent = st.t ? st.n + "/" + st.t : "";
+    btn.append(num, name, bar, count);
+    btn.addEventListener("click", () => openDay(key));
+    li.appendChild(btn);
+    if (past && st.missed.length) {
+      const m = document.createElement("p"); m.className = "wk-missed";
+      m.textContent = "Missed: " + st.missed.join(", ");
+      li.appendChild(m);
+    }
+    list.appendChild(li);
+  });
+
+  // the week's total and the task skipped most
+  $("wk-total-n").textContent = sumN;
+  $("wk-total-of").textContent = "/" + sumT;
+  $("wk-total-label").textContent = weekOffset === 0 ? "done so far this week" : "done that week";
+  $("wk-summary").classList.toggle("hidden", sumT === 0);
+  const top = Object.entries(skips).sort((a, b) => b[1] - a[1])[0];
+  $("wk-skip").textContent = top && top[1] >= 2 ? "Most skipped: " + top[0] + " (" + top[1] + " days)" : "";
+  $("wk-skip").classList.toggle("hidden", !(top && top[1] >= 2));
+}
+
+// Tap a day on the Week page → open it on Today
+function openDay(key) {
+  const [y, m, d] = key.split("-").map(Number);
+  const a = new Date(y, m - 1, d, 12), b = new Date(); b.setHours(12, 0, 0, 0);
+  const diff = Math.round((a - b) / 86400000);
+  show("today");
+  if (diff !== 0) { offset = Math.max(MIN_OFFSET, diff); renderToday(); }
+}
+
+function goToWeek(n) {
+  n = Math.min(0, Math.max(MIN_WEEK, n));
+  if (n === weekOffset) return;
+  const dir = n > weekOffset ? 1 : -1;
+  weekOffset = n;
+  renderWeek();
+  [$("week-header").querySelector(".date-inner"), $("week-list")].forEach(el => {
+    if (el && el.animate) el.animate([{ transform: "translateX(" + (dir * 40) + "px)", opacity: 0 }, { transform: "none", opacity: 1 }], { duration: 220, easing: "ease-out" });
+  });
+}
+$("wk-prev").addEventListener("click", () => goToWeek(weekOffset - 1));
+$("wk-next").addEventListener("click", () => goToWeek(weekOffset + 1));
+$("wk-back").addEventListener("click", () => goToWeek(0));
 
 // ---------------------------------------------------------------------
 // Moving between days: arrows (desktop), swipe on the date (phone),
@@ -1546,11 +1678,12 @@ $("next-day").addEventListener("click", () => goToDay(offset + 1));
 $("back-today").addEventListener("click", () => goToDay(0));
 
 document.addEventListener("keydown", e => {
-  if (view !== "today" || dragging) return;
+  if ((view !== "today" && view !== "week") || dragging) return;
   if (e.key !== "ArrowLeft" && e.key !== "ArrowRight") return;
   const t = e.target;
   if (t && (t.tagName === "INPUT" || t.tagName === "TEXTAREA" || t.isContentEditable)) return;
   e.preventDefault();
+  if (view === "week") { goToWeek(weekOffset + (e.key === "ArrowRight" ? 1 : -1)); return; }
   goToDay(offset + (e.key === "ArrowRight" ? 1 : -1));
 });
 
@@ -1597,6 +1730,7 @@ setInterval(() => {
   lastToday = todayKey();
   prune();
   if (view === "today" && !dragging) renderToday();
+  if (view === "week") renderWeek();
 }, 30000);
 
 // ---------------------------------------------------------------------

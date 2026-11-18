@@ -36,6 +36,7 @@
     <nav id="nav" class="hidden">
       <div class="tabs">
         <button id="nav-today" class="active">Today</button>
+        <button id="nav-week">Week</button>
         <button id="nav-settings">Settings</button>
       </div>
       <div class="nav-right">
@@ -66,6 +67,28 @@
             <svg aria-hidden="true" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="square"><path d="M15 5l-7 7 7 7"></path></svg>
           </button>
           <button id="next-day" type="button" aria-label="Next day">
+            <svg aria-hidden="true" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="square"><path d="M9 5l7 7-7 7"></path></svg>
+          </button>
+        </div>
+      </header>
+      <header class="today wk-head hidden" id="week-header" data-view="week">
+        <div class="date-inner">
+          <p class="wk-num" id="wk-num"></p>
+          <div class="day-label">
+            <div class="rel-row">
+              <span class="rel-tag" id="wk-tag"></span>
+              <button id="wk-back" class="back-today hidden" type="button">Back to this week</button>
+            </div>
+            <span class="wk-kicker" id="wk-kicker"></span>
+            <h1 class="wk-range" id="wk-range"></h1>
+            <span class="wk-year" id="wk-year"></span>
+          </div>
+        </div>
+        <div class="day-arrows">
+          <button id="wk-prev" type="button" aria-label="Previous week">
+            <svg aria-hidden="true" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="square"><path d="M15 5l-7 7 7 7"></path></svg>
+          </button>
+          <button id="wk-next" type="button" aria-label="Next week">
             <svg aria-hidden="true" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="square"><path d="M9 5l7 7-7 7"></path></svg>
           </button>
         </div>
@@ -124,6 +147,15 @@
         <button type="submit" class="small-btn add">Add</button>
       </form>
       <p id="oneoff-note" class="oneoff-note">Ticked ones clear tomorrow. Unticked ones carry over.</p>
+    </div>
+  </section>
+
+  <!-- WEEK -->
+  <section id="view-week" class="hidden">
+    <ul id="week-list" class="wk-list"></ul>
+    <div class="wk-summary" id="wk-summary">
+      <div class="wk-total"><span class="wk-total-n" id="wk-total-n"></span><span class="wk-total-of" id="wk-total-of"></span><span class="wk-total-label" id="wk-total-label"></span></div>
+      <p class="wk-skip" id="wk-skip"></p>
     </div>
   </section>
 
