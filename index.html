@@ -6,7 +6,10 @@
 <meta name="theme-color" content="#FFFFFF">
 <title>Daily Checklist</title>
 <link rel="icon" type="image/png" href="icon.png">
-<link rel="apple-touch-icon" href="icon.png">
+<link rel="apple-touch-icon" href="apple-touch-icon.png">
+<link rel="manifest" href="manifest.webmanifest">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="Checklist">
 <!-- Apply the saved look before anything is drawn, so there's no flash -->
 <script>
   (function () {
@@ -127,6 +130,17 @@
   <!-- SETTINGS -->
   <section id="view-settings" class="hidden">
 
+    <!-- Install as an app (only shown when the browser offers it) -->
+    <div class="look-block hidden" id="install-block">
+      <div class="mode-row">
+        <div class="setting-text">
+          <span class="mode-label">Install as an app</span>
+          <p class="look-note" id="install-note">Opens in its own window with its own icon, and works offline.</p>
+        </div>
+        <button type="button" class="install-btn" id="install-btn">Install</button>
+      </div>
+    </div>
+
     <div class="look-block">
       <div class="mode-row">
         <div class="setting-text">
@@ -176,6 +190,15 @@
   </section>
 
   </main>
+</div>
+
+<!-- "Deleted … — Undo" bar -->
+<div id="toast" class="toast hidden" role="status" aria-live="polite">
+  <span id="toast-text" class="toast-text"></span>
+  <button type="button" id="toast-undo" class="toast-undo">Undo</button>
+  <button type="button" id="toast-close" class="toast-close" aria-label="Dismiss">
+    <svg aria-hidden="true" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="square"><path d="M6 6l12 12M18 6L6 18"></path></svg>
+  </button>
 </div>
 
 <!-- Supabase library (online saving). Safe to leave in even if sync is off. -->

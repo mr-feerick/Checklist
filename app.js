@@ -442,13 +442,47 @@ function editStep(d, i, j, text) {
   templateChanged(d);
 }
 function removeStep(d, i, j) {
+  const text = template[d][i].s[j];
+  const saved = savedTicks(d, idx => idx === encStep(i, j));
   template[d][i].s.splice(j, 1);
   templateChanged(d, null, (ti, sj) => ti !== i ? sj : sj === j ? null : sj > j ? sj - 1 : sj);
+  offerUndo(text, () => {
+    if (!template[d][i]) return;
+    template[d][i].s.splice(j, 0, text);
+    restoreTicks(d, saved, idx => isStep(idx) && decStep(idx)[0] === i && decStep(idx)[1] >= j ? encStep(i, decStep(idx)[1] + 1) : idx);
+  });
 }
 
 function removeTask(d, i) {
+  const item = JSON.parse(JSON.stringify(template[d][i]));
+  const saved = savedTicks(d, idx => isStep(idx) ? decStep(idx)[0] === i : idx === i);
   template[d].splice(i, 1);
   templateChanged(d, old => old === i ? null : old > i ? old - 1 : old);
+  offerUndo(item.t, () => {
+    template[d].splice(Math.min(i, template[d].length), 0, item);
+    restoreTicks(d, saved, idx => {
+      if (!isStep(idx)) return idx >= i ? idx + 1 : idx;
+      const [ti, sj] = decStep(idx);
+      return ti >= i ? encStep(ti + 1, sj) : idx;
+    });
+  });
+}
+
+// ----- Undo helpers for weekly tasks: keep the ticks that a delete removed -----
+function savedTicks(d, match) {
+  const out = {};
+  Object.keys(done).filter(k => keyWeekday(k) === d).forEach(k => {
+    const hit = done[k].filter(match);
+    if (hit.length) out[k] = hit;
+  });
+  return out;
+}
+function restoreTicks(d, saved, shift) {
+  const keys = Object.keys(done).filter(k => keyWeekday(k) === d);
+  Object.keys(saved).forEach(k => { if (!keys.includes(k)) keys.push(k); });
+  keys.forEach(k => { done[k] = (done[k] || []).map(shift).concat(saved[k] || []); });
+  saveLocal();
+  sync(async () => { await pushTemplate(); await pushTicks(keys); });
 }
 
 function moveTask(d, from, to) {
@@ -1138,6 +1172,16 @@ function addOneoffStep(id, text) {
 function removeOneoffStep(id, j) {
   const o = oneoffs.find(x => x.id === id);
   if (!o) return;
+  const step = { ...o.subs[j] };
+  const wasDone = o.done_on;
+  offerUndo(step.text, () => {
+    const t = oneoffs.find(x => x.id === id);
+    if (!t) return;
+    t.subs.splice(Math.min(j, t.subs.length), 0, step);
+    t.done_on = wasDone;
+    saveLocal();
+    sync(() => pushOneoffs([t]));
+  });
   o.subs.splice(j, 1);
   const st = oneoffStatus(o, currentKey);
   if (o.subs.length) o.done_on = st.complete ? (o.done_on || currentKey) : null;
@@ -1147,6 +1191,16 @@ function removeOneoffStep(id, j) {
 }
 
 function removeOneoff(id) {
+  const pos = oneoffs.findIndex(o => o.id === id);
+  if (pos < 0) return;
+  const copy = JSON.parse(JSON.stringify(oneoffs[pos]));
+  offerUndo(copy.text, () => {
+    if (oneoffs.some(o => o.id === id)) return;
+    oneoffs.splice(Math.min(pos, oneoffs.length), 0, copy);
+    oneoffDeleted = oneoffDeleted.filter(x => x !== id);   // not deleted after all
+    saveLocal();
+    sync(() => pushOneoffs([copy]));
+  });
   oneoffs = oneoffs.filter(o => o.id !== id);
   oneoffDeleted.push(id);
   saveLocal();
@@ -1587,6 +1641,86 @@ if (darkQuery) {
   else if (darkQuery.addListener) darkQuery.addListener(onChange);
 }
 applyLook();
+
+// ---------------------------------------------------------------------
+// "Deleted … — Undo" bar
+// ---------------------------------------------------------------------
+let undoTimer = null;
+let undoAction = null;
+function offerUndo(what, restore) {
+  const bar = $("toast");
+  undoAction = restore;
+  $("toast-text").textContent = "Deleted “" + what + "”";
+  bar.classList.remove("hidden");
+  (window.requestAnimationFrame || (f => setTimeout(f, 16)))(() => bar.classList.add("show"));
+  startUndoTimer();
+}
+function startUndoTimer() { clearTimeout(undoTimer); undoTimer = setTimeout(hideUndo, 6000); }
+function hideUndo() {
+  clearTimeout(undoTimer);
+  undoAction = null;
+  const bar = $("toast");
+  bar.classList.remove("show");
+  setTimeout(() => { if (!bar.classList.contains("show")) bar.classList.add("hidden"); }, 250);
+}
+$("toast-undo").addEventListener("click", () => {
+  const fn = undoAction;
+  hideUndo();
+  if (!fn) return;
+  fn();
+  if (view === "settings") renderSettings(); else renderToday();
+});
+$("toast-close").addEventListener("click", hideUndo);
+// don't vanish while you're reaching for it
+$("toast").addEventListener("pointerenter", () => clearTimeout(undoTimer));
+$("toast").addEventListener("pointerleave", () => { if (undoAction) startUndoTimer(); });
+$("toast").addEventListener("focusin", () => clearTimeout(undoTimer));
+$("toast").addEventListener("focusout", () => { if (undoAction) startUndoTimer(); });
+
+// ---------------------------------------------------------------------
+// Install as an app + offline support
+// ---------------------------------------------------------------------
+const isInstalled = () =>
+  (window.matchMedia && matchMedia("(display-mode: standalone)").matches) || window.navigator.standalone === true;
+const isIOS = /iphone|ipad|ipod/i.test(navigator.userAgent) || (navigator.platform === "MacIntel" && navigator.maxTouchPoints > 1);
+let installPrompt = null;
+
+function showInstall() {
+  const block = $("install-block");
+  if (isInstalled()) { block.classList.add("hidden"); return; }
+  if (installPrompt) {
+    $("install-note").textContent = "Opens in its own window with its own icon, and works offline.";
+    $("install-btn").classList.remove("hidden");
+    block.classList.remove("hidden");
+  } else if (isIOS) {
+    // iPhone/iPad don't offer an install button: explain the Share menu instead
+    $("install-note").textContent = "In Safari, tap the Share button, then “Add to Home Screen”.";
+    $("install-btn").classList.add("hidden");
+    block.classList.remove("hidden");
+  } else {
+    block.classList.add("hidden");
+  }
+}
+
+window.addEventListener("beforeinstallprompt", e => {
+  e.preventDefault();          // we show our own Install button instead
+  installPrompt = e;
+  showInstall();
+});
+window.addEventListener("appinstalled", () => { installPrompt = null; showInstall(); });
+$("install-btn").addEventListener("click", async () => {
+  if (!installPrompt) return;
+  installPrompt.prompt();
+  try { await installPrompt.userChoice; } catch {}
+  installPrompt = null;
+  showInstall();
+});
+showInstall();
+
+// Offline support (only works on the real https site, not when opening the file directly)
+if ("serviceWorker" in navigator && /^https?:$/.test(location.protocol)) {
+  window.addEventListener("load", () => navigator.serviceWorker.register("sw.js").catch(() => {}));
+}
 
 // ---------------------------------------------------------------------
 // Start
